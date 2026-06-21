@@ -910,7 +910,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
@@ -1032,7 +1031,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ),
                 streamChanges: Stream.empty,
               },
-              adapter: {} as ProviderInstance["adapter"],
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             },
             {
@@ -1055,7 +1054,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ),
                 streamChanges: Stream.empty,
               },
-              adapter: {} as ProviderInstance["adapter"],
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             },
           ] satisfies ReadonlyArray<ProviderInstance>;
@@ -1176,7 +1175,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(refreshedProvider),
               streamChanges: Stream.fromPubSub(changes),
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
@@ -1306,7 +1304,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 refresh: Effect.succeed(authoritativeProvider),
                 streamChanges: Stream.fromPubSub(changes),
               },
-              adapter: {} as ProviderInstance["adapter"],
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const instanceRegistryLayer = Layer.succeed(
@@ -1413,7 +1411,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1506,7 +1504,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
           const codexInstance = makeInstance(codexProvider);
