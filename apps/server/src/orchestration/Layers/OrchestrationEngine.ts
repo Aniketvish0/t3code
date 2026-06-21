@@ -1,11 +1,9 @@
 import type {
-  OrchestrationClientOrigin,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
-  ThreadId,
+  ProjectOrchestrationCommand,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -55,30 +53,16 @@ const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
 const isOrchestrationCommandIdConflictError = Schema.is(OrchestrationCommandIdConflictError);
 
 interface CommandEnvelope {
-  command: OrchestrationCommand;
-  origin: OrchestrationClientOrigin | undefined;
+  command: ProjectOrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
 
-function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+function commandToAggregateRef(command: ProjectOrchestrationCommand): {
+  readonly aggregateKind: "project";
+  readonly aggregateId: ProjectId;
 } {
-  switch (command.type) {
-    case "project.create":
-    case "project.meta.update":
-    case "project.delete":
-      return {
-        aggregateKind: "project",
-        aggregateId: command.projectId,
-      };
-    default:
-      return {
-        aggregateKind: "thread",
-        aggregateId: command.threadId,
-      };
-  }
+  return { aggregateKind: "project", aggregateId: command.projectId };
 }
 
 const makeOrchestrationEngine = Effect.gen(function* () {
@@ -125,6 +109,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
 
       commandReadModel = yield* projectEventsOntoReadModel(commandReadModel, persistedEvents);
+
+      yield* eventStore.publishCommitted(
+        persistedEvents.filter(
+          (event) =>
+            event.type === "project.created" ||
+            event.type === "project.meta-updated" ||
+            event.type === "project.deleted",
+        ),
+      );
 
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
@@ -210,16 +203,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 }),
           ),
         );
-        const plannedEvents = Array.isArray(eventBase) ? eventBase : [eventBase];
-        // Stamp the dispatching client's origin onto every event the command
-        // produced. The decider stays pure; attribution is an engine concern.
-        const eventBases =
-          envelope.origin === undefined
-            ? plannedEvents
-            : plannedEvents.map((planned) => ({
-                ...planned,
-                metadata: { ...planned.metadata, origin: envelope.origin },
-              }));
+        const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -247,6 +231,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 commandId: envelope.command.commandId,
                 aggregateKind: lastSavedEvent.aggregateKind,
                 aggregateId: lastSavedEvent.aggregateId,
+                commandType: envelope.command.type,
                 acceptedAt: lastSavedEvent.occurredAt,
                 resultSequence: lastSavedEvent.sequence,
                 status: "accepted",
@@ -270,9 +255,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
         commandReadModel = committedCommand.nextCommandReadModel;
-        for (const cleanup of committedCommand.attachmentCleanups) {
-          yield* cleanup;
-        }
+        yield* eventStore.publishCommitted(
+          committedCommand.committedEvents.filter(
+            (event) =>
+              event.type === "project.created" ||
+              event.type === "project.meta-updated" ||
+              event.type === "project.deleted",
+          ),
+        );
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
           if (index === 0) {
@@ -345,6 +335,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   commandId: envelope.command.commandId,
                   aggregateKind: aggregateRef.aggregateKind,
                   aggregateId: aggregateRef.aggregateId,
+                  commandType: envelope.command.type,
                   acceptedAt: yield* nowIso,
                   resultSequence: commandReadModel.snapshotSequence,
                   status: "rejected",
@@ -372,12 +363,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive, limit) =>
     eventStore.readFromSequence(fromSequenceExclusive, limit);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command, options) =>
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
         command,
-        origin: options?.origin,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });
