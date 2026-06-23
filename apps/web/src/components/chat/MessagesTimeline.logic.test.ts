@@ -513,6 +513,16 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
+        id: "thread-created-entry",
+        kind: "event" as const,
+        createdAt: "2026-01-01T00:00:10Z",
+        projectedItem: {
+          item: {
+            type: "thread_created",
+          },
+        } as never,
+      },
+      {
         id: "assistant-final-entry",
         kind: "message" as const,
         createdAt: "2026-01-01T00:00:20Z",
@@ -547,6 +557,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
+      "thread-created-entry",
       "assistant-final-entry",
     ]);
 
@@ -564,6 +575,7 @@ describe("deriveMessagesTimelineRows", () => {
       "turn-fold:turn-1",
       "assistant-thought-entry",
       "work-entry-1",
+      "thread-created-entry",
       "assistant-final-entry",
     ]);
     expect(
@@ -635,6 +647,17 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
+        id: "superseded-thread-created-entry",
+        kind: "event" as const,
+        createdAt: "2026-01-01T00:00:04.500Z",
+        attempt: supersededAttempt,
+        projectedItem: {
+          item: {
+            type: "thread_created",
+          },
+        } as never,
+      },
+      {
         id: "steer-user-entry",
         kind: "message" as const,
         createdAt: "2026-01-01T00:00:05Z",
@@ -684,6 +707,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "initial-user-entry",
       `attempt-fold:${supersededAttemptId}`,
+      "superseded-thread-created-entry",
       "steer-user-entry",
       "active-assistant-entry",
     ]);
@@ -703,6 +727,7 @@ describe("deriveMessagesTimelineRows", () => {
       `attempt-fold:${supersededAttemptId}`,
       "superseded-assistant-entry",
       "superseded-work-entry",
+      "superseded-thread-created-entry",
       "steer-user-entry",
       "active-assistant-entry",
     ]);
