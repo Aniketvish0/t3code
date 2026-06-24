@@ -43,6 +43,8 @@ import { Separator } from "./ui/separator";
 import { ComposerSurface } from "./chat/ComposerSurface";
 
 interface BranchToolbarProps {
+  layout?: "composer" | "panel";
+  panelSection?: "all" | "workspace" | "branch";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   showGitControls: boolean;
@@ -377,6 +379,8 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
 }
 
 export const BranchToolbar = memo(function BranchToolbar({
+  layout = "composer",
+  panelSection = "all",
   environmentId,
   threadId,
   showGitControls,
@@ -467,6 +471,40 @@ export const BranchToolbar = memo(function BranchToolbar({
   const labelsOverflow = useLabelsOverflow(stripElement);
 
   if (!hasActiveThread || !activeProject) return null;
+
+  if (layout === "panel") {
+    return (
+      <div className="flex w-full flex-col" data-thread-panel-run-context>
+        {panelSection !== "branch" ? (
+          <BranchToolbarEnvModeSelector
+            displayMode="panel"
+            envLocked={envModeLocked}
+            effectiveEnvMode={effectiveEnvMode}
+            activeWorktreePath={activeWorktreePath}
+            workspaceRoot={activeProject.workspaceRoot}
+            onEnvModeChange={onEnvModeChange}
+          />
+        ) : null}
+        {panelSection !== "workspace" ? (
+          <BranchToolbarBranchSelector
+            displayMode="panel"
+            className="w-full"
+            environmentId={environmentId}
+            threadId={threadId}
+            {...(draftId ? { draftId } : {})}
+            envLocked={envLocked}
+            {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+            {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+            {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+            startFromOrigin={startFromOrigin}
+            onStartFromOriginChange={onStartFromOriginChange}
+            {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+            {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <ComposerSurface.ContextStrip
