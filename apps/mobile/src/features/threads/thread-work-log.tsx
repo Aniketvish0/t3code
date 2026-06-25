@@ -1,13 +1,13 @@
 import * as Haptics from "expo-haptics";
-import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { LayoutAnimation, Pressable, ScrollView, View } from "react-native";
+import { SymbolView, type SFSymbol } from "expo-symbols";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { LayoutAnimation, Pressable, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
-import Animated, { FadeIn } from "react-native-reanimated";
+import { ThreadActivityInspector } from "./ThreadActivityInspector";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
   duration: 180,
@@ -122,16 +122,17 @@ export function collapsedWorkLogHeight(
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
+  readonly environmentId: EnvironmentId;
+  readonly expanded: boolean;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
-  readonly renderImage: MarkdownImageRenderer;
+  readonly workspaceRoot?: string | null;
 }) {
-  const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
-    ...activity,
-    detail: compactActivityDetail(activity.detail),
-  }));
+  const colorScheme = useColorScheme();
+  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const rows = props.activities;
 
   if (rows.length === 0) {
     return null;
@@ -150,9 +151,9 @@ export function ThreadWorkLog(props: {
       <View className="gap-px">
         {rows.map((row) => {
           const expanded = props.expandedRows[row.id] ?? false;
-          const canExpand = row.canExpand;
-          const fullDetail = expanded ? row.getFullDetail() : null;
-          const displayText = row.detail ? `${row.summary} ${row.detail}` : row.summary;
+          const canExpand = row.fullDetail !== null;
+          const detail = compactActivityDetail(row.detail);
+          const displayText = detail ? `${row.summary} ${detail}` : row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
 
           return (
@@ -199,8 +200,8 @@ export function ThreadWorkLog(props: {
                     >
                       {row.summary}
                     </Text>
-                    {row.detail ? (
-                      <Text className="text-foreground-muted opacity-60"> {row.detail}</Text>
+                    {detail ? (
+                      <Text className="text-foreground-muted opacity-60"> {detail}</Text>
                     ) : null}
                   </Text>
 
@@ -240,22 +241,14 @@ export function ThreadWorkLog(props: {
                 </View>
               </Pressable>
 
-              {fullDetail ? (
-                <View className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5">
-                  <ScrollView
-                    nestedScrollEnabled
-                    directionalLockEnabled
-                    showsVerticalScrollIndicator
-                    className="max-h-60"
-                    contentContainerStyle={{ paddingRight: 8 }}
-                  >
-                    <Text
-                      selectable
-                      className="font-mono text-2xs leading-normal text-foreground-muted"
-                    >
-                      {fullDetail}
-                    </Text>
-                  </ScrollView>
+              {expanded && row.fullDetail ? (
+                <View className="ml-7 border-l border-neutral-300/60 pb-1.5 pl-3 pt-0.5 dark:border-white/[0.12]">
+                  <ThreadActivityInspector
+                    activity={row}
+                    environmentId={props.environmentId}
+                    iconColor={props.iconSubtleColor}
+                    workspaceRoot={props.workspaceRoot}
+                  />
                 </View>
               ) : null}
             </Animated.View>
@@ -273,6 +266,8 @@ export function ThreadWorkGroupToggle(props: {
   readonly onlyToolActivities: boolean;
   readonly onToggle: () => void;
 }) {
+  const colorScheme = useColorScheme();
+  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
   const noun = props.onlyToolActivities
     ? props.hiddenCount === 1
       ? "tool call"
