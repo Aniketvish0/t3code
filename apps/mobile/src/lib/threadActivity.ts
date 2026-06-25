@@ -49,6 +49,7 @@ export interface ThreadFeedActivity {
     | "wrench"
     | "zap";
   readonly toolLike: boolean;
+  readonly prominent: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
 }
@@ -527,6 +528,10 @@ function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
   );
 }
 
+function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
+  return item.type === "fork" || item.type === "thread_created" || item.type === "subagent";
+}
+
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
   if (!itemIsToolLike(item)) return null;
   if (item.type === "error" || item.status === "failed") return "failure";
@@ -694,6 +699,7 @@ function toFeedActivity(row: OrchestrationV2ProjectedTurnItem): ThreadFeedActivi
       )
       .join("\n"),
     toolLike: itemIsToolLike(item),
+    prominent: itemIsProminent(item),
     status: itemStatus(item),
     projectedItem: row,
   };
@@ -717,7 +723,12 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
       continue;
     }
     const previous = grouped.at(-1);
-    if (previous?.type === "activity-group" && previous.runId === entry.runId) {
+    if (
+      previous?.type === "activity-group" &&
+      previous.runId === entry.runId &&
+      !entry.activity.prominent &&
+      !previous.activities.some((activity) => activity.prominent)
+    ) {
       grouped[grouped.length - 1] = {
         ...previous,
         activities: [...previous.activities, entry.activity],
@@ -813,7 +824,16 @@ function deriveThreadFeedRunFolds(
     }
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
     const hiddenEntryIds = new Set(
-      group.entries.filter((entry) => entry.id !== terminalAssistantId).map((entry) => entry.id),
+      group.entries
+        .filter(
+          (entry) =>
+            entry.id !== terminalAssistantId &&
+            !(
+              entry.type === "activity-group" &&
+              entry.activities.some((activity) => activity.prominent)
+            ),
+        )
+        .map((entry) => entry.id),
     );
     const firstEntry = group.entries[0];
     const lastEntry = group.entries.at(-1);
