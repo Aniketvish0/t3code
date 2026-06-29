@@ -2,6 +2,7 @@
 
 import {
   ArrowUpCircleIcon,
+  ChevronDownIcon,
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
@@ -11,10 +12,9 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
-  resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -29,6 +29,7 @@ import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
@@ -36,11 +37,10 @@ import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption } from "./providerDriverMeta";
-import { providerSettingsTabClassName } from "./providerSettingsTabs";
+import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
-import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
@@ -77,25 +77,6 @@ function makeEnvironmentDraftRow(
   };
 }
 
-function providerEnvironmentsEqual(
-  left: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
-  right: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((variable, index) => {
-      const other = right[index];
-      return (
-        other !== undefined &&
-        variable.name === other.name &&
-        variable.value === other.value &&
-        variable.sensitive === other.sensitive &&
-        variable.valueRedacted === other.valueRedacted
-      );
-    })
-  );
-}
-
 /**
  * Read a string[] at `key` from the opaque config blob, filtering out
  * non-string entries. Used for `customModels`, which is always typed as
@@ -126,6 +107,55 @@ function nextConfigBlobWithValue(
     config !== null && typeof config === "object" ? { ...(config as Record<string, unknown>) } : {};
   base[key] = value;
   return base;
+}
+
+export function readProviderEnvironmentVariable(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  name: string,
+): ProviderInstanceEnvironmentVariable | undefined {
+  return environment?.find((variable) => variable.name === name);
+}
+
+export function providerEnvironmentWithoutNames(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  names: ReadonlySet<string>,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  return (environment ?? []).filter((variable) => !names.has(variable.name));
+}
+
+export function nextProviderEnvironmentWithFieldValue(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  field: ProviderEnvironmentFieldDefinition,
+  value: string,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  const trimmed = value.trim();
+  const next: ProviderInstanceEnvironmentVariable[] = [];
+  let found = false;
+
+  for (const variable of environment ?? []) {
+    if (variable.name !== field.name) {
+      next.push(variable);
+      continue;
+    }
+    found = true;
+    if (trimmed.length > 0) {
+      next.push({
+        name: variable.name,
+        value: trimmed,
+        sensitive: field.sensitive ?? variable.sensitive,
+      });
+    }
+  }
+
+  if (!found && trimmed.length > 0) {
+    next.push({
+      name: field.name,
+      value: trimmed,
+      sensitive: field.sensitive ?? true,
+    });
+  }
+
+  return next;
 }
 
 export function deriveProviderModelsForDisplay(input: {
@@ -172,26 +202,6 @@ function ProviderEnvironmentSection(props: {
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
-  const previousEnvironmentRef = useRef(props.environment);
-  const lastPublishedEnvironmentRef = useRef<
-    ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined
-  >(undefined);
-
-  useEffect(() => {
-    const previousEnvironment = previousEnvironmentRef.current;
-    const lastPublishedEnvironment = lastPublishedEnvironmentRef.current;
-    previousEnvironmentRef.current = props.environment;
-    lastPublishedEnvironmentRef.current = undefined;
-    if (
-      previousEnvironment === props.environment ||
-      providerEnvironmentsEqual(previousEnvironment, props.environment) ||
-      (lastPublishedEnvironment !== undefined &&
-        providerEnvironmentsEqual(lastPublishedEnvironment, props.environment))
-    ) {
-      return;
-    }
-    setRows(props.environment.map(makeEnvironmentDraftRow));
-  }, [props.environment]);
 
   const publishRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
     const published: ProviderInstanceEnvironmentVariable[] = [];
@@ -211,7 +221,6 @@ function ProviderEnvironmentSection(props: {
       const { id: _id, ...rest } = row;
       published.push({ ...rest, name });
     }
-    lastPublishedEnvironmentRef.current = published;
     props.onChange(published);
   };
 
@@ -351,15 +360,60 @@ function ProviderEnvironmentSection(props: {
   );
 }
 
+function ProviderEnvironmentFieldRow(props: {
+  readonly field: ProviderEnvironmentFieldDefinition;
+  readonly variable: ProviderInstanceEnvironmentVariable | undefined;
+  readonly idPrefix: string;
+  readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
+  readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
+}) {
+  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
+  const placeholder = props.variable?.valueRedacted
+    ? "Stored secret - enter a new value to replace"
+    : props.field.placeholder;
+
+  return (
+    <label htmlFor={inputId} className="block">
+      <span className="text-xs font-medium text-foreground">{props.field.label}</span>
+      <div className="mt-1.5 flex min-w-0 items-center gap-2">
+        <DraftInput
+          id={inputId}
+          className="min-w-0 flex-1"
+          type={props.field.sensitive === false ? undefined : "password"}
+          autoComplete="off"
+          value={value}
+          onCommit={(next) => props.onCommit(props.field, next)}
+          placeholder={placeholder}
+          spellCheck={false}
+        />
+        {props.variable ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+            onClick={() => props.onRemove(props.field)}
+            aria-label={`Clear ${props.field.label}`}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        ) : null}
+      </div>
+      {props.field.description ? (
+        <span className="mt-1 block text-xs text-muted-foreground">{props.field.description}</span>
+      ) : null}
+    </label>
+  );
+}
+
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
   readonly liveProvider: ServerProvider | undefined;
-  readonly mode: "list" | "editor";
-  readonly selected?: boolean | undefined;
-  readonly onSelect?: (() => void) | undefined;
-  readonly readOnly?: boolean | undefined;
+  readonly isExpanded: boolean;
+  readonly onExpandedChange: (open: boolean) => void;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
   /**
    * Pass `undefined` to hide the delete button entirely. Built-in default
@@ -387,9 +441,12 @@ interface ProviderInstanceCardProps {
 }
 
 /**
- * Renders one provider instance as either a compact selectable list row or
- * the full editor shown beside that list. Both modes use the same enabled
- * state and provider metadata.
+ * A single configured provider-instance row in the Providers settings
+ * section. Used for every row — both the built-in default instance for a
+ * driver (rendered with `onDelete` omitted) and user-authored custom
+ * instances (`onDelete` supplied). The only UI difference between the two
+ * is whether the trash button is visible; every other field (display
+ * name, config fields, models) behaves identically.
  *
  * Behavior notes:
  *   - `liveProvider` is matched by the caller via `instanceId`; when no
@@ -400,20 +457,20 @@ interface ProviderInstanceCardProps {
  *     notice instead of editable fields, so fork instances round-trip
  *     without accidentally destroying their config.
  *   - The enabled Switch writes to the envelope's `instance.enabled`
- *     field, which is the single enabled flag: the server folds any legacy
- *     driver-specific `config.enabled` into the envelope on load and both
- *     sides resolve through `resolveProviderInstanceEnabled` (an explicit
- *     false wins, then envelope, then config, then the driver default).
+ *     field; the server's registry consults this at `entry.enabled ?? true`
+ *     before materializing the instance, and the probe also checks its
+ *     driver-specific `config.enabled`. We treat the envelope flag as the
+ *     single source of truth from the UI — built-in cards used to write
+ *     the inner flag, but on the promotion-to-instance path every edit
+ *     flows through the envelope.
  */
 export function ProviderInstanceCard({
   instanceId,
   instance,
   driverOption,
   liveProvider,
-  mode,
-  selected = false,
-  onSelect,
-  readOnly = false,
+  isExpanded,
+  onExpandedChange,
   onUpdate,
   onDelete,
   headerAction,
@@ -479,9 +536,14 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
-  const visibleTab = driverOption === undefined ? "configuration" : activeTab;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
+  const environmentFields = driverOption?.environmentFields ?? [];
+  const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
+  const genericEnvironment = providerEnvironmentWithoutNames(
+    instance.environment,
+    environmentFieldNames,
+  );
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -539,27 +601,48 @@ export function ProviderInstanceCard({
     );
   };
 
+  const updateGenericEnvironment = (
+    environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) => {
+    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
+      environmentFieldNames.has(variable.name),
+    );
+    updateEnvironment([...dedicatedEnvironment, ...environment]);
+  };
+
+  const updateEnvironmentField = (field: ProviderEnvironmentFieldDefinition, value: string) => {
+    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+  };
+
+  const removeEnvironmentField = (field: ProviderEnvironmentFieldDefinition) => {
+    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+  };
+
   const titleIconNode = driverKind ? (
     <ProviderInstanceIcon
       driverKind={driverKind}
       displayName={displayName}
       accentColor={accentColor}
       showBadge={Boolean(accentColor)}
+      statusDotClassName={statusStyle.dot}
+      indicatorBackground="var(--card)"
       className="size-5"
       iconClassName="size-4 text-foreground/80"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-[7px]"
     />
   ) : FallbackIconComponent ? (
-    <span className="inline-flex size-5 shrink-0 items-center justify-center">
+    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
       <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
+      <span
+        className={cn(
+          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-card",
+          statusStyle.dot,
+        )}
+        aria-hidden
+      />
     </span>
   ) : (
-    <span
-      className="inline-flex size-5 shrink-0 items-center justify-center text-[10px] font-semibold leading-none text-foreground/80"
-      aria-hidden
-    >
-      {providerInstanceInitials(displayName)}
-    </span>
+    <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
   );
 
   const titleHeadNode = (
@@ -609,6 +692,24 @@ export function ProviderInstanceCard({
         </span>
       ) : null}
     </>
+  );
+
+  const authRowNode = (
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
+      {hasAuthenticatedEmail ? (
+        <>
+          <span>Authenticated as</span>
+          <ProviderAuthEmail email={authEmail} />
+          {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
+        </>
+      ) : (
+        <>
+          <span>{summary.headline}</span>
+          <ProviderAuthEmail email={authEmail} separator prefix="Email" />
+        </>
+      )}
+      {summary.detail ? <span>- {summary.detail}</span> : null}
+    </p>
   );
 
   const versionCodeNode = versionLabel ? (
@@ -686,7 +787,6 @@ export function ProviderInstanceCard({
       </div>
     );
   }
-
   return (
     <div className="min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
       <div className="flex min-h-16 shrink-0 items-start justify-between gap-3 border-b border-border/70 px-4 py-3">
@@ -932,8 +1032,97 @@ export function ProviderInstanceCard({
               onModelOrderChange={onModelOrderChange}
             />
           </div>
-        ) : null}
+        </div>
       </div>
+
+      <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
+        <CollapsibleContent>
+          <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
+            <div>
+              <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
+                <span className="text-xs font-medium text-foreground">Display name</span>
+                <DraftInput
+                  id={`provider-instance-${instanceId}-display-name`}
+                  className="mt-1.5"
+                  value={instance.displayName ?? ""}
+                  onCommit={updateDisplayName}
+                  placeholder={driverOption?.label ?? "Instance label"}
+                  spellCheck={false}
+                />
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Optional label shown in the provider list.
+                </span>
+              </label>
+            </div>
+
+            <div>
+              <ProviderAccentColorPicker
+                displayName={displayName}
+                value={accentColor}
+                onCommit={updateAccentColor}
+                commitDelayMs={120}
+                description="Used to distinguish this instance in picker rails and model lists."
+              />
+            </div>
+
+            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+              {environmentFields.length > 0 ? (
+                <div className="mb-4 grid gap-3">
+                  {environmentFields.map((field) => (
+                    <ProviderEnvironmentFieldRow
+                      key={field.name}
+                      field={field}
+                      variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                      idPrefix={`provider-instance-${instanceId}`}
+                      onCommit={updateEnvironmentField}
+                      onRemove={removeEnvironmentField}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              <ProviderEnvironmentSection
+                environment={genericEnvironment}
+                onChange={updateGenericEnvironment}
+              />
+            </div>
+
+            {driverOption ? (
+              <ProviderSettingsForm
+                definition={driverOption}
+                value={instance.config}
+                idPrefix={`provider-instance-${instanceId}`}
+                variant="card"
+                onChange={updateConfig}
+              />
+            ) : null}
+
+            {driverOption !== undefined ? (
+              <ProviderModelsSection
+                instanceId={instanceId}
+                driverKind={driverKind}
+                models={modelsForDisplay}
+                customModels={customModels}
+                hiddenModels={hiddenModels}
+                favoriteModels={favoriteModels}
+                modelOrder={modelOrder}
+                onChange={updateCustomModels}
+                onHiddenModelsChange={onHiddenModelsChange}
+                onFavoriteModelsChange={onFavoriteModelsChange}
+                onModelOrderChange={onModelOrderChange}
+              />
+            ) : (
+              <div>
+                <p className="text-xs text-muted-foreground">
+                  This instance uses a driver (
+                  <code className="text-foreground">{String(instance.driver)}</code>) that is not
+                  shipped with the current build. Configuration values are preserved but cannot be
+                  edited from this surface.
+                </p>
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
