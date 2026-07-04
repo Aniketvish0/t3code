@@ -327,7 +327,12 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const sortedThreads = sortThreads(matchingThreads, input.threadSortOrder);
+    const sortedGroupThreads = sortThreads(group.threads, input.threadSortOrder);
+    const matchingThreadSet = groupMatches ? null : new Set(matchingThreads);
+    const sortedThreads =
+      matchingThreadSet === null
+        ? sortedGroupThreads
+        : sortedGroupThreads.filter((thread) => matchingThreadSet.has(thread));
     // An active search should reach the full history, so the recency window
     // only trims the default (no-query) view.
     const recentThreads =
@@ -335,9 +340,9 @@ export function buildHomeThreadGroups(input: {
         ? selectRecentThreads(sortedThreads, input.threadSortOrder, now)
         : sortedThreads;
 
-    // A stale project id still resolves to the canonical member with the same
-    // environment/path, so quick creation follows the machine with the newest activity.
-    const lastActiveProject = Arr.head(sortedThreads).pipe(
+    // Use the full history so search does not change the target machine.
+    // Resolve stale project IDs to the canonical member at the same environment/path.
+    const lastActiveProject = Arr.head(sortedGroupThreads).pipe(
       Option.flatMap((thread) =>
         Arr.findFirst(
           input.projects,

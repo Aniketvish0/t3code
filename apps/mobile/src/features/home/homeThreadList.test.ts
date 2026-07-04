@@ -743,4 +743,48 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.environmentId).toBe(desktopEnv);
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
   });
+
+  it("keeps the quick new-thread target when search hides the newest thread", () => {
+    const laptopProject = makeProject({
+      environmentId: EnvironmentId.make("environment-laptop"),
+      id: ProjectId.make("project-laptop"),
+      title: "t3code",
+      repositoryIdentity: {
+        canonicalKey: "github.com/pingdotgg/t3code",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@github.com:pingdotgg/t3code.git",
+        },
+      },
+    });
+    const desktopProject = makeProject({
+      ...laptopProject,
+      environmentId: EnvironmentId.make("environment-desktop"),
+      id: ProjectId.make("project-desktop"),
+    });
+    const laptopThread = makeThread({
+      environmentId: laptopProject.environmentId,
+      id: ThreadId.make("thread-laptop"),
+      projectId: laptopProject.id,
+      title: "Older laptop thread",
+      updatedAt: "2026-06-27T00:00:00.000Z",
+    });
+    const desktopThread = makeThread({
+      environmentId: desktopProject.environmentId,
+      id: ThreadId.make("thread-desktop"),
+      projectId: desktopProject.id,
+      title: "Newest desktop thread",
+      updatedAt: "2026-06-28T00:00:00.000Z",
+    });
+    const projects = [laptopProject, desktopProject];
+    const threads = [laptopThread, desktopThread];
+
+    const groups = buildGroups(projects, threads);
+    const searchGroups = buildGroups(projects, threads, { searchQuery: "laptop" });
+
+    expect(groups[0]?.newThreadTarget).toEqual(desktopProject);
+    expect(searchGroups[0]?.threads).toEqual([laptopThread]);
+    expect(searchGroups[0]?.newThreadTarget).toEqual(desktopProject);
+  });
 });
