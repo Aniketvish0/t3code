@@ -1053,7 +1053,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills" | "workspaceRoot"> & {
+  props: Pick<ThreadFeedProps, "environmentId" | "skills" | "threadId" | "workspaceRoot"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1296,6 +1296,7 @@ function renderFeedEntry(
       activities={entry.activities}
       anchorKey={entry.id}
       copiedRowId={props.copiedRowId}
+      currentThreadId={props.threadId}
       environmentId={props.environmentId}
       expanded={props.expandedWorkGroups[entry.id] ?? false}
       expandedRows={props.expandedWorkRows}
@@ -2115,6 +2116,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         environmentId: props.environmentId,
+        threadId: props.threadId,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -2156,6 +2158,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.threadId,
       props.threadTitle,
       props.skills,
       props.workspaceRoot,
