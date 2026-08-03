@@ -62,6 +62,11 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  OrchestrationSearchThreadsError,
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
+} from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
@@ -103,6 +108,20 @@ import {
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
+  RelayClientInstallFailedError,
+  RelayClientInstallProgressEventSchema,
+  RelayClientStatusSchema,
+} from "./relayClient.ts";
+import {
+  ProjectListEntriesError,
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
+  ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
+  ProjectSearchContentsError,
+  ProjectSearchContentsInput,
+  ProjectSearchContentsResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -919,7 +938,7 @@ export const WsOrchestrationV2DispatchCommandRpc = Rpc.make(
   {
     payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
     success: OrchestrationV2RpcSchemas.dispatchCommand.output,
-    error: OrchestrationV2DispatchCommandError,
+    error: Schema.Union([OrchestrationV2DispatchCommandError, EnvironmentAuthorizationError]),
   },
 );
 
@@ -938,6 +957,15 @@ export const WsOrchestrationV2GetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationV2SearchThreadsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.searchThreads,
+  {
+    payload: OrchestrationSearchThreadsInput,
+    success: OrchestrationSearchThreadsResult,
+    error: Schema.Union([OrchestrationSearchThreadsError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationV2GetArchivedShellSnapshotRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
   {
@@ -952,7 +980,7 @@ export const WsOrchestrationV2GetThreadProjectionRpc = Rpc.make(
   {
     payload: OrchestrationV2RpcSchemas.getThreadProjection.input,
     success: OrchestrationV2RpcSchemas.getThreadProjection.output,
-    error: OrchestrationV2GetThreadProjectionError,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
   },
 );
 
@@ -977,7 +1005,7 @@ export const WsOrchestrationV2SubscribeShellRpc = Rpc.make(
   {
     payload: OrchestrationV2RpcSchemas.subscribeShell.input,
     success: OrchestrationV2RpcSchemas.subscribeShell.output,
-    error: OrchestrationV2GetShellSnapshotError,
+    error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
     stream: true,
   },
 );
@@ -987,7 +1015,7 @@ export const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(
   {
     payload: OrchestrationV2RpcSchemas.subscribeThread.input,
     success: OrchestrationV2RpcSchemas.subscribeThread.output,
-    error: OrchestrationV2GetThreadProjectionError,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
     stream: true,
   },
 );
@@ -1114,6 +1142,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksSetEnabledRpc,
   WsScheduledTasksDeleteRpc,
   WsScheduledTasksRunNowRpc,
+  WsServerReportClientActivityRpc,
+  WsServerReportHostPowerStateRpc,
+  WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsPullRequestsListRpc,
@@ -1185,9 +1216,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsSubscribeBackgroundPolicyRpc,
+  WsSubscribeResourceTelemetryRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
+  WsOrchestrationV2SearchThreadsRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
