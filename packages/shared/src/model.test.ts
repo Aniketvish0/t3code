@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
@@ -11,9 +10,9 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
-  isClaudeUltrathinkPrompt,
-  modelSelectionsEqual,
+  normalizeCustomModelSlug,
   normalizeModelSlug,
+  modelSelectionsEqual,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -34,6 +33,15 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
       type: "boolean",
     },
   ],
+});
+
+describe("model slug normalization", () => {
+  it("preserves exact custom slugs instead of expanding provider aliases", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+
+    expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
+    expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
 });
 
 const claudeCaps: ModelCapabilities = createModelCapabilities({
@@ -169,35 +177,5 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
-  });
-});
-
-describe("applyClaudePromptEffortPrefix", () => {
-  it("keeps slash commands intact when ultrathink is selected", () => {
-    expect(applyClaudePromptEffortPrefix("/compact", "ultrathink")).toBe("/compact");
-    expect(applyClaudePromptEffortPrefix(" /compact keep recent errors ", "ultrathink")).toBe(
-      "/compact keep recent errors",
-    );
-    expect(applyClaudePromptEffortPrefix(" /review src/model.ts ", "ultrathink")).toBe(
-      "/review src/model.ts",
-    );
-    expect(applyClaudePromptEffortPrefix("/security-review", "ultrathink")).toBe(
-      "/security-review",
-    );
-    expect(applyClaudePromptEffortPrefix("/plugin:skill run", "ultrathink")).toBe(
-      "/plugin:skill run",
-    );
-    expect(applyClaudePromptEffortPrefix("/deploy.prod to staging", "ultrathink")).toBe(
-      "/deploy.prod to staging",
-    );
-  });
-
-  it("still adds the ultrathink prefix to ordinary prompts", () => {
-    expect(applyClaudePromptEffortPrefix("Investigate this failure", "ultrathink")).toBe(
-      "Ultrathink:\nInvestigate this failure",
-    );
-    expect(applyClaudePromptEffortPrefix("/home/theo/app.ts crashed on load", "ultrathink")).toBe(
-      "Ultrathink:\n/home/theo/app.ts crashed on load",
-    );
   });
 });
