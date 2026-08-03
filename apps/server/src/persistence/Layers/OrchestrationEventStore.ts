@@ -535,7 +535,7 @@ const makeEventStore = Effect.gen(function* () {
     ),
   );
 
-  const readApplicationEvents = (input: {
+  const readApplicationEventPage = (input: {
     readonly afterSequence: number;
     readonly throughSequence: number;
     readonly limit: number;
@@ -565,7 +565,7 @@ const makeEventStore = Effect.gen(function* () {
       afterSequence: number,
     ): Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError> =>
       Stream.unwrap(
-        readApplicationEvents({
+        readApplicationEventPage({
           afterSequence,
           throughSequence: input.throughSequence,
           limit: READ_PAGE_SIZE,
@@ -613,6 +613,7 @@ const makeEventStore = Effect.gen(function* () {
     readAgentEvents,
     latestAgentSequence,
     latestApplicationSequence,
+    readApplicationEvents: catchUpApplicationEvents,
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
   } satisfies OrchestrationEventStoreShape;
