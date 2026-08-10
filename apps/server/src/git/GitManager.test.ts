@@ -1502,8 +1502,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   });
 
   it.effect(
-  effect(
-  it.effect(
     "status ignores unrelated fork PRs when the current branch tracks the same repository",
     () =>
       Effect.gen(function* () {
