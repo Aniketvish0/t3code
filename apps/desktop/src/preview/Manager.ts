@@ -2611,6 +2611,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const applyViewportOverride = Effect.fn("PreviewManager.applyViewportOverride")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) {
+    yield* ensureControlSession(wc);
+    yield* attemptPromise({ operation: "applyViewportOverride", tabId, webContentsId: wc.id }, () =>
+      "clear" in input
+        ? wc.debugger.sendCommand("Emulation.clearDeviceMetricsOverride")
+        : wc.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
+            width: input.width,
+            height: input.height,
+            deviceScaleFactor: 1,
+            mobile: input.width < 768,
+          }),
+    );
+  });
+
+  // Human/toolbar path. Must not take agent control or write a resize action.
+  const setViewport = Effect.fn("PreviewManager.setViewport")(function* (
+    tabId: string,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* applyViewportOverride(tabId, wc, input);
+  });
+
   const automationSetViewport = Effect.fn("PreviewManager.automationSetViewport")(function* (
     tabId: string,
     input: { readonly width: number; readonly height: number } | { readonly clear: true },
@@ -4113,6 +4140,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAudioMuted,
     setColorScheme,
+    setViewport,
     automationSetViewport,
     setMainWindow,
     startRecording,
@@ -4457,6 +4485,10 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setViewport: (
+      tabId: string,
+      input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly automationSetViewport: (
       tabId: string,
       input: { readonly width: number; readonly height: number } | { readonly clear: true },
@@ -4560,6 +4592,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
     setAudioMuted: operations.setAudioMuted,
+    setViewport: operations.setViewport,
     automationSetViewport: operations.automationSetViewport,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {

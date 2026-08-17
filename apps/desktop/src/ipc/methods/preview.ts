@@ -164,6 +164,18 @@ export const setAudioMuted = DesktopIpc.makeIpcMethod({
     yield* manager.setAudioMuted(tabId, audioMuted);
   }),
 });
+export const setViewport = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_VIEWPORT_CHANNEL,
+  payload: DesktopPreviewAutomationSetViewportInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setViewport")(function* (input) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setViewport(
+      input.tabId,
+      "clear" in input ? { clear: true } : { width: input.width, height: input.height },
+    );
+  }),
+});
 export const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
@@ -397,6 +409,7 @@ export const methods = [
   hardReload,
   setColorScheme,
   setAudioMuted,
+  setViewport,
   openDevTools,
   clearCookies,
   clearCache,
