@@ -509,6 +509,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const rollbackGuestIfCurrent = async (
               previousSetting: PreviewViewportSetting,
               operationServerEpoch: string | null,
+              guestHasRequestedOverride: boolean,
             ) => {
               const latestState = readThreadPreviewState(threadRef);
               const latestSetting =
@@ -529,16 +530,18 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               } catch {
                 return;
               }
+              const zoomFactor = latestState.desktopByTabId[ready.tabId]?.zoomFactor ?? 1;
+              let guestRolledBack = !guestHasRequestedOverride;
               try {
                 await applyPreviewGuestViewport(
                   setViewport,
                   ready.runtimeTabId,
                   previousSetting,
-                  latestState.desktopByTabId[ready.tabId]?.zoomFactor ?? 1,
+                  zoomFactor,
                 );
+                guestRolledBack = true;
               } catch {
-                // Guest still has the requested override; leave the store matching it.
-                return;
+                if (guestHasRequestedOverride) return;
               }
               const rollback = await resize({
                 environmentId,
@@ -550,6 +553,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               });
               if (rollback._tag !== "Failure") {
                 updatePreviewServerSnapshot(threadRef, rollback.value);
+                return;
+              }
+              if (guestHasRequestedOverride && guestRolledBack) {
+                await applyPreviewGuestViewport(
+                  setViewport,
+                  ready.runtimeTabId,
+                  setting,
+                  zoomFactor,
+                ).catch(() => undefined);
               }
             };
             const persistViewport = async () => {
@@ -581,7 +593,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   operationState.desktopByTabId[ready.tabId]?.zoomFactor ?? 1,
                 );
               } catch (error) {
-                await rollbackGuestIfCurrent(previousSetting, operationState.serverEpoch);
+                await rollbackGuestIfCurrent(previousSetting, operationState.serverEpoch, false);
                 throw error;
               }
               return {
@@ -607,7 +619,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               );
             } catch (cause) {
               await runBrowserViewportMutation(ready.runtimeTabId, async () => {
-                await rollbackGuestIfCurrent(applied.previousSetting, applied.serverEpoch);
+                await rollbackGuestIfCurrent(applied.previousSetting, applied.serverEpoch, true);
               });
               throw cause;
             }
