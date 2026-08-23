@@ -506,6 +506,47 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const input = request.input as PreviewAutomationResizeInput;
             const setting = resolvePreviewViewport(input);
             const setViewport = ready.bridge.automation.setViewport;
+            const rollbackGuestIfCurrent = async (
+              previousSetting: PreviewViewportSetting,
+              operationServerEpoch: string | null,
+            ) => {
+              const latestState = readThreadPreviewState(threadRef);
+              const latestSetting =
+                latestState.sessions[ready.tabId]?.viewport ?? FILL_PREVIEW_VIEWPORT;
+              if (
+                !shouldRollbackPreviewViewport(
+                  previousSetting,
+                  setting,
+                  latestSetting,
+                  operationServerEpoch,
+                  latestState.serverEpoch,
+                )
+              ) {
+                return;
+              }
+              try {
+                assertPreviewRuntimeCurrent(threadRef, ready.tabId, ready.runtimeTabId, request);
+              } catch {
+                return;
+              }
+              try {
+                await applyPreviewGuestViewport(setViewport, ready.runtimeTabId, previousSetting);
+              } catch {
+                // Guest still has the requested override; leave the store matching it.
+                return;
+              }
+              const rollback = await resize({
+                environmentId,
+                input: {
+                  threadId: request.threadId,
+                  tabId: ready.tabId,
+                  viewport: previousSetting,
+                },
+              });
+              if (rollback._tag !== "Failure") {
+                updatePreviewServerSnapshot(threadRef, rollback.value);
+              }
+            };
             const persistViewport = async () => {
               const operationState = assertPreviewRuntimeCurrent(
                 threadRef,
@@ -530,22 +571,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               try {
                 await applyPreviewGuestViewport(setViewport, ready.runtimeTabId, setting);
               } catch (error) {
-                const rollback = await resize({
-                  environmentId,
-                  input: {
-                    threadId: request.threadId,
-                    tabId: ready.tabId,
-                    viewport: previousSetting,
-                  },
-                });
-                if (rollback._tag !== "Failure") {
-                  updatePreviewServerSnapshot(threadRef, rollback.value);
-                }
-                await applyPreviewGuestViewport(
-                  setViewport,
-                  ready.runtimeTabId,
-                  previousSetting,
-                ).catch(() => undefined);
+                await rollbackGuestIfCurrent(previousSetting, operationState.serverEpoch);
                 throw error;
               }
               return {
@@ -571,35 +597,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               );
             } catch (cause) {
               await runBrowserViewportMutation(ready.runtimeTabId, async () => {
-                const latestState = readThreadPreviewState(threadRef);
-                const latestSetting =
-                  latestState.sessions[ready.tabId]?.viewport ?? FILL_PREVIEW_VIEWPORT;
-                if (
-                  shouldRollbackPreviewViewport(
-                    applied.previousSetting,
-                    setting,
-                    latestSetting,
-                    applied.serverEpoch,
-                    latestState.serverEpoch,
-                  )
-                ) {
-                  const rollback = await resize({
-                    environmentId,
-                    input: {
-                      threadId: request.threadId,
-                      tabId: ready.tabId,
-                      viewport: applied.previousSetting,
-                    },
-                  });
-                  if (rollback._tag !== "Failure") {
-                    updatePreviewServerSnapshot(threadRef, rollback.value);
-                    await applyPreviewGuestViewport(
-                      setViewport,
-                      ready.runtimeTabId,
-                      applied.previousSetting,
-                    ).catch(() => undefined);
-                  }
-                }
+                await rollbackGuestIfCurrent(applied.previousSetting, applied.serverEpoch);
               });
               throw cause;
             }

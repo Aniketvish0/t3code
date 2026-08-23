@@ -573,6 +573,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
+  const viewportOverridesRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, { readonly width: number; readonly height: number }>
+  >(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
   const pointerEventListenersRef = yield* Ref.make<ReadonlySet<PointerEventListener>>(new Set());
@@ -1991,6 +1994,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (Option.isNone(tab)) return;
+    yield* SynchronizedRef.update(viewportOverridesRef, (overrides) =>
+      replaceMap(overrides, (copy) => {
+        copy.delete(tabId);
+      }),
+    );
     const closedTab = tab.value;
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
@@ -2527,10 +2535,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  // Re-establish the control session after a detach, restoring any
-  // color-scheme override the tab carries. The scheme is read after the
-  // session attaches so a concurrent setColorScheme is not overwritten with
-  // a stale snapshot.
+  // Re-establish the control session after a detach, restoring color-scheme
+  // and viewport overrides the tab carries. Both live on the CDP debugger
+  // session, so they are lost on webview swap and DevTools open/close.
+  // Values are read after attach so a concurrent setColorScheme/setViewport
+  // is not overwritten with a stale snapshot.
   const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
     Effect.gen(function* () {
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
@@ -2552,6 +2561,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ],
           }),
         );
+      }
+      const viewportOverride = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
+      if (viewportOverride) {
+        yield* applyViewportOverride(tabId, wc, viewportOverride);
       }
     }).pipe(Effect.ignore);
 
@@ -2619,6 +2632,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     mobile: Math.min(input.width, input.height) < 768,
   });
 
+  const rememberViewportOverride = (
+    tabId: string,
+    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+  ) =>
+    SynchronizedRef.update(viewportOverridesRef, (overrides) =>
+      replaceMap(overrides, (copy) => {
+        if ("clear" in input) copy.delete(tabId);
+        else copy.set(tabId, { width: input.width, height: input.height });
+      }),
+    );
+
   const applyViewportOverride = Effect.fn("PreviewManager.applyViewportOverride")(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -2641,6 +2665,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: { readonly width: number; readonly height: number } | { readonly clear: true },
   ) {
     const wc = yield* requireWebContents(tabId);
+    yield* rememberViewportOverride(tabId, input);
     yield* applyViewportOverride(tabId, wc, input);
   });
 
@@ -2649,6 +2674,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: { readonly width: number; readonly height: number } | { readonly clear: true },
   ) {
     const wc = yield* requireWebContents(tabId);
+    yield* rememberViewportOverride(tabId, input);
     yield* withControlSession(tabId, wc, "resize", (send) =>
       "clear" in input
         ? send("Emulation.clearDeviceMetricsOverride")

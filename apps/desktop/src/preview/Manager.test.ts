@@ -1759,6 +1759,63 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("re-applies a guest viewport override after a webview swap", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const makeWebContents = (id: number) => {
+          const sendCommand = vi.fn(async () => undefined);
+          return {
+            sendCommand,
+            wc: {
+              id,
+              isDestroyed: () => false,
+              isDevToolsOpened: () => false,
+              getType: () => "webview",
+              getURL: () => "https://example.com",
+              getTitle: () => "Example",
+              isLoading: () => false,
+              getZoomFactor: () => 1,
+              setZoomFactor: vi.fn(),
+              setAudioMuted: vi.fn(),
+              isCurrentlyAudible: () => false,
+              on: vi.fn(),
+              off: vi.fn(),
+              ipc: { on: vi.fn(), off: vi.fn() },
+              send: webviewSend,
+              navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+              setWindowOpenHandler: vi.fn(),
+              debugger: {
+                isAttached: () => false,
+                attach: vi.fn(),
+                sendCommand,
+                on: vi.fn(),
+                off: vi.fn(),
+              },
+            } as never,
+          };
+        };
+        const first = makeWebContents(42);
+        fromId.mockReturnValue(first.wc);
+
+        yield* manager.createTab("tab_viewport_restore");
+        yield* manager.registerWebview("tab_viewport_restore", 42);
+        yield* manager.setViewport("tab_viewport_restore", { width: 390, height: 844 });
+
+        const replacement = makeWebContents(43);
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("tab_viewport_restore", 43);
+        yield* Effect.yieldNow;
+
+        expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
+          width: 390,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: true,
+        });
+      }),
+    ),
+  );
+
   effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {
