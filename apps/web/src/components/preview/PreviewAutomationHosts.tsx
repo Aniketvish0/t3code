@@ -530,7 +530,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 return;
               }
               try {
-                await applyPreviewGuestViewport(setViewport, ready.runtimeTabId, previousSetting);
+                await applyPreviewGuestViewport(
+                  setViewport,
+                  ready.runtimeTabId,
+                  previousSetting,
+                  latestState.desktopByTabId[ready.tabId]?.zoomFactor ?? 1,
+                );
               } catch {
                 // Guest still has the requested override; leave the store matching it.
                 return;
@@ -569,7 +574,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               }
               updatePreviewServerSnapshot(threadRef, result.value);
               try {
-                await applyPreviewGuestViewport(setViewport, ready.runtimeTabId, setting);
+                await applyPreviewGuestViewport(
+                  setViewport,
+                  ready.runtimeTabId,
+                  setting,
+                  operationState.desktopByTabId[ready.tabId]?.zoomFactor ?? 1,
+                );
               } catch (error) {
                 await rollbackGuestIfCurrent(previousSetting, operationState.serverEpoch);
                 throw error;

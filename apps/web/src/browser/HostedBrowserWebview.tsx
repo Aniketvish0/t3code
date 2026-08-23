@@ -61,6 +61,7 @@ export function HostedBrowserWebview(props: {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
   const guestViewportRef = useRef(viewport);
+  const guestZoomRef = useRef(1);
   const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(INITIAL_WEBVIEW_CRASH_RECOVERY_STATE);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
   const presentation = useBrowserSurfaceStore(
@@ -132,6 +133,7 @@ export function HostedBrowserWebview(props: {
                 setViewport,
                 runtimeTabId,
                 guestViewportRef.current,
+                guestZoomRef.current,
               ).catch(() => undefined);
             }
           }
@@ -169,6 +171,7 @@ export function HostedBrowserWebview(props: {
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  guestZoomRef.current = normalizedZoomFactor;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
   const viewportAspectRatio =
@@ -217,12 +220,15 @@ export function HostedBrowserWebview(props: {
     const setViewport = previewBridge?.setViewport;
     if (!setViewport || !hasWebContents) return;
     const frame = window.requestAnimationFrame(() => {
-      void applyPreviewGuestViewport(setViewport, runtimeTabId, guestViewportRef.current).catch(
-        () => undefined,
-      );
+      void applyPreviewGuestViewport(
+        setViewport,
+        runtimeTabId,
+        guestViewportRef.current,
+        guestZoomRef.current,
+      ).catch(() => undefined);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [guestViewportKey, hasWebContents, runtimeTabId]);
+  }, [guestViewportKey, hasWebContents, runtimeTabId, normalizedZoomFactor]);
   const fittedSourceViewport =
     presentation.fitSourceContent && lastRect
       ? resolveFittedBrowserViewport(
