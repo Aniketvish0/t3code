@@ -1759,11 +1759,16 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("re-applies a guest viewport override after a webview swap", () =>
+  effectIt.effect("restores the latest viewport when a webview swap races a newer setting", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const makeWebContents = (id: number) => {
-          const sendCommand = vi.fn(async () => undefined);
+        const makeWebContents = (
+          id: number,
+          sendCommand: (
+            method: string,
+            params?: Record<string, unknown>,
+          ) => Promise<unknown> = vi.fn(async () => undefined),
+        ) => {
           return {
             sendCommand,
             wc: {
@@ -1801,17 +1806,30 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_viewport_restore", 42);
         yield* manager.setViewport("tab_viewport_restore", { width: 390, height: 844 });
 
-        const replacement = makeWebContents(43);
+        const restoreStarted = Promise.withResolvers<void>();
+        const releaseRestore = Promise.withResolvers<void>();
+        const appliedWidths: number[] = [];
+        let holdRestore = true;
+        const replacementSendCommand = vi.fn(
+          async (method: string, params?: Record<string, unknown>) => {
+            if (method !== "Emulation.setDeviceMetricsOverride") return;
+            if (holdRestore) {
+              holdRestore = false;
+              restoreStarted.resolve();
+              await releaseRestore.promise;
+            }
+            if (typeof params?.width === "number") appliedWidths.push(params.width);
+          },
+        );
+        const replacement = makeWebContents(43, replacementSendCommand);
         fromId.mockReturnValue(replacement.wc);
         yield* manager.registerWebview("tab_viewport_restore", 43);
-        yield* Effect.yieldNow;
+        yield* Effect.promise(() => restoreStarted.promise);
+        yield* manager.setViewport("tab_viewport_restore", { width: 1024, height: 768 });
+        releaseRestore.resolve();
+        yield* settle(() => appliedWidths.at(-1) === 1024 && appliedWidths.length >= 3);
 
-        expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
-          width: 390,
-          height: 844,
-          deviceScaleFactor: 0,
-          mobile: false,
-        });
+        expect(appliedWidths).toEqual([1024, 390, 1024]);
       }),
     ),
   );

@@ -70,4 +70,20 @@ describe("shouldRollbackPreviewViewport", () => {
     expect(applyGuest).toHaveBeenNthCalledWith(1, previous);
     expect(applyGuest).toHaveBeenNthCalledWith(2, requested);
   });
+
+  it("does not restore the requested guest size after a newer resize", async () => {
+    const previous = { _tag: "freeform", width: 800, height: 600 } as const;
+    const applyGuest = vi.fn(async () => undefined);
+
+    await applyPreviewViewportRollback({
+      previous,
+      requested,
+      applyGuest,
+      rollbackServer: async () => false,
+      shouldRestoreRequested: () => false,
+    });
+
+    expect(applyGuest).toHaveBeenCalledOnce();
+    expect(applyGuest).toHaveBeenCalledWith(previous);
+  });
 });

@@ -565,6 +565,18 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 // supersedes any stuck automation CDP command.
                 applyGuest: (viewport) =>
                   applyPreviewGuestViewport(ready.bridge.setViewport, ready.runtimeTabId, viewport),
+                shouldRestoreRequested: () => {
+                  const currentState = readThreadPreviewState(threadRef);
+                  const currentSetting =
+                    currentState.sessions[ready.tabId]?.viewport ?? FILL_PREVIEW_VIEWPORT;
+                  return shouldRollbackPreviewViewport(
+                    previousSetting,
+                    setting,
+                    currentSetting,
+                    operationServerEpoch,
+                    currentState.serverEpoch,
+                  );
+                },
                 rollbackServer: async () => {
                   const rollback = await resize({
                     environmentId,

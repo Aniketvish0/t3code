@@ -7,13 +7,14 @@ export async function applyPreviewViewportRollback(options: {
   readonly requested: PreviewViewportSetting;
   readonly applyGuest: (setting: PreviewViewportSetting) => Promise<void>;
   readonly rollbackServer: () => Promise<boolean>;
+  readonly shouldRestoreRequested?: () => boolean;
 }): Promise<void> {
   void options.applyGuest(options.previous).catch(() => undefined);
   let serverRolledBack = false;
   try {
     serverRolledBack = await options.rollbackServer();
   } finally {
-    if (!serverRolledBack) {
+    if (!serverRolledBack && (options.shouldRestoreRequested?.() ?? true)) {
       void options.applyGuest(options.requested).catch(() => undefined);
     }
   }

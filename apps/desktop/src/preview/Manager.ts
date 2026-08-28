@@ -2570,9 +2570,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         );
       }
-      const viewportOverride = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
-      if (viewportOverride) {
-        yield* applyViewportOverride(tabId, wc, viewportOverride.input);
+      const viewportIntent = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
+      if (viewportIntent) {
+        yield* settleViewportIntent(
+          tabId,
+          wc,
+          viewportIntent,
+          tabLifecycleGenerations.get(tabId),
+          (input) => applyViewportOverride(tabId, wc, input),
+        );
       }
     }).pipe(Effect.ignore);
 
