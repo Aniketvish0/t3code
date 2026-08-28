@@ -165,12 +165,15 @@ limit. The whole sweep has a two-minute deadline and stops early after a structu
 limit response. Page rotation and alternating `down` and `inactive` priority keep large backlogs
 moving across later sweeps.
 
-Cleanup only deletes tunnels for hosts that registered recovery with the public key on their current
-environment link. Older hosts remain untouched. It also skips incomplete allocations with no
-recorded tunnel ID because provisioning can be between tunnel creation and the database update.
-Allocations that point at another tunnel ID are skipped for the same ownership reason. These skips
-can leave stale tunnels for manual cleanup, but they prevent a cleanup sweep from deleting a tunnel
-that a concurrent provision owns.
+For tunnels with existing allocation records, cleanup only deletes tunnels for hosts that registered
+recovery with the public key on their current environment link. Older allocation records remain
+untouched. The reaper treats an expired same-namespace tunnel with no allocation record as an orphan
+because legacy-host protection requires an allocation record. It rechecks the tunnel's Cloudflare
+status and deletes it after the inactivity grace period. It still skips incomplete allocations with
+no recorded tunnel ID because provisioning can be between tunnel creation and the database update.
+Allocations that point at another tunnel ID are skipped for the same ownership reason. These
+allocation skips can leave stale tunnels for manual cleanup, but they prevent a cleanup sweep from
+deleting a tunnel that a concurrent provision owns.
 
 The background service has an independent lifecycle. Connect setup may offer to install it, but
 logout leaves it running; manage it with `t3 service status`, `install`, `update`, and `uninstall`.
