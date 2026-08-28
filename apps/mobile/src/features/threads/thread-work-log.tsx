@@ -9,7 +9,6 @@ import { AppText as Text } from "../../components/AppText";
 import { T3_CODE_BRAND_MARK_SOURCE } from "../../components/brandAssets";
 import { cn } from "../../lib/cn";
 import { threadFeedActivityIsVisible, type ThreadFeedActivity } from "../../lib/threadActivity";
-import { useThemeColor } from "../../lib/useThemeColor";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { ThreadActivityInspector } from "./ThreadActivityInspector";
@@ -229,7 +228,6 @@ export function ThreadWorkLog(props: {
   readonly onToggleRow: (rowId: string) => void;
   readonly workspaceRoot?: string | null;
 }) {
-  const pressedBackground = useThemeColor("--color-subtle");
   const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
     ...activity,
     detail: compactActivityDetail(activity.detail),
@@ -325,10 +323,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
                   }
                 }}
                 onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-                style={({ pressed }) => ({
-                  backgroundColor: pressed ? pressedBackground : "transparent",
-                })}
-                className="rounded-md px-0.5 py-0.5"
+                className="rounded-md px-0.5 py-0 active:bg-subtle"
               >
                 <View className="min-h-9 flex-row items-center gap-1.5">
                   <View className="h-5 w-5 shrink-0 items-center justify-center">
@@ -339,7 +334,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
                     <Text
                       className={cn(
                         "font-t3-medium text-foreground",
-                        textIsDestructive && "text-rose-600 dark:text-rose-400",
+                        textIsDestructive && "text-adaptive-rose-600-400",
                       )}
                     >
                       {row.summary}
@@ -386,7 +381,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
               </Pressable>
 
               {expanded && canExpand ? (
-                <View className="ml-7 border-l border-neutral-300/60 pb-1.5 pl-3 pt-0.5 dark:border-white/[0.12]">
+                <View className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1.5 pl-3 pt-0.5">
                   <ThreadActivityInspector
                     activity={row}
                     currentThreadId={props.currentThreadId}
@@ -415,10 +410,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
             triggerDisclosureFeedback();
             props.onToggleGroup();
           }}
-          style={({ pressed }) => ({
-            backgroundColor: pressed ? pressedBackground : "transparent",
-          })}
-          className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0.5"
+          className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0.5 active:bg-subtle"
         >
           <View className="h-5 w-5 items-center justify-center">
             <SymbolView
@@ -805,7 +797,6 @@ export function ThreadWorkGroupToggle(props: {
   readonly onlyToolActivities: boolean;
   readonly onToggle: () => void;
 }) {
-  const pressedBackground = useThemeColor("--color-subtle");
   const noun = threadWorkLogOverflowNoun(props.onlyToolActivities, props.hiddenCount);
 
   return (
@@ -821,10 +812,7 @@ export function ThreadWorkGroupToggle(props: {
           triggerDisclosureFeedback();
           props.onToggle();
         }}
-        style={({ pressed }) => ({
-          backgroundColor: pressed ? pressedBackground : "transparent",
-        })}
-        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5"
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
       >
         <View className="h-[18px] w-5 items-center justify-center">
           <SymbolView
