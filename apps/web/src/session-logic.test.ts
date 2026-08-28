@@ -18,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveTimelineEntriesFromVisibleTurnItems,
+  deriveRevertTurnCountByUserMessageId,
   findLatestProposedPlan,
   isLatestRunSettled,
   providerErrorPresentation,
