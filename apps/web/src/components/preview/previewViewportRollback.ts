@@ -27,9 +27,13 @@ export function shouldRollbackPreviewViewport(
   currentServerEpoch: string | null,
 ): boolean {
   const requestedKey = browserViewportSettingKey(requested);
+  const latestKey = browserViewportSettingKey(latest);
+  // A persistence call can time out before its successful response updates the
+  // client snapshot. Re-send the previous value when the snapshot still shows
+  // it so a late server commit cannot survive the timeout.
   return (
     currentServerEpoch === operationServerEpoch &&
-    browserViewportSettingKey(latest) === requestedKey &&
+    (latestKey === requestedKey || latestKey === browserViewportSettingKey(previous)) &&
     browserViewportSettingKey(previous) !== requestedKey
   );
 }

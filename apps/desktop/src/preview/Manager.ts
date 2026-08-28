@@ -2660,6 +2660,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
 
+  const prepareViewportIntent = (tabId: string, input: PreviewViewportOverride) =>
+    withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+          return yield* new PreviewTabNotFoundError({ tabId });
+        }
+        const wc = yield* requireWebContents(tabId);
+        const intent = yield* rememberViewportOverride(tabId, input);
+        return {
+          wc,
+          intent,
+          generation: tabLifecycleGenerations.get(tabId),
+        };
+      }),
+    );
+
   const applyViewportOverride = Effect.fn("PreviewManager.applyViewportOverride")(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -2683,20 +2700,40 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     wc: Electron.WebContents,
     intent: PreviewViewportIntent,
+    generation: number | undefined,
     applyInitial: (input: PreviewViewportOverride) => Effect.Effect<void, PreviewManagerError>,
   ) {
-    const reconcileLatest = Effect.gen(function* () {
-      let applied = intent;
-      while (true) {
-        const latest = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
-        if (!latest || latest === applied) return;
-        const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-        if (current?.webContentsId !== wc.id || wc.isDestroyed()) return;
-        yield* applyViewportOverride(tabId, wc, latest.input);
-        applied = latest;
-      }
-    });
-    yield* applyInitial(intent.input).pipe(Effect.ensuring(reconcileLatest.pipe(Effect.ignore)));
+    const initialExit = yield* Effect.exit(applyInitial(intent.input));
+    const reconcileExit = yield* Effect.exit(
+      Effect.gen(function* () {
+        let applied = Exit.isSuccess(initialExit) ? intent : undefined;
+        let appliedWebContents = Exit.isSuccess(initialExit) ? wc : undefined;
+        while (true) {
+          const latest = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
+          if (!latest || tabLifecycleGenerations.get(tabId) !== generation) {
+            return yield* new PreviewTabNotFoundError({ tabId });
+          }
+          const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          if (!current) return yield* new PreviewTabNotFoundError({ tabId });
+          if (current.webContentsId == null) {
+            return yield* new PreviewWebviewNotInitializedError({ tabId });
+          }
+          const currentWebContents = webContents.fromId(current.webContentsId);
+          if (!currentWebContents || currentWebContents.isDestroyed()) {
+            return yield* new PreviewWebContentsNotFoundError({
+              tabId,
+              webContentsId: current.webContentsId,
+            });
+          }
+          if (latest === applied && currentWebContents === appliedWebContents) return;
+          yield* applyViewportOverride(tabId, currentWebContents, latest.input);
+          applied = latest;
+          appliedWebContents = currentWebContents;
+        }
+      }),
+    );
+    if (Exit.isFailure(initialExit)) return yield* Effect.failCause(initialExit.cause);
+    if (Exit.isFailure(reconcileExit)) return yield* Effect.failCause(reconcileExit.cause);
   });
 
   // Human/toolbar path. Must not take agent control or write a resize action.
@@ -2704,10 +2741,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewViewportOverride,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    const intent = yield* rememberViewportOverride(tabId, input);
-    yield* settleViewportIntent(tabId, wc, intent, (latest) =>
-      applyViewportOverride(tabId, wc, latest),
+    const prepared = yield* prepareViewportIntent(tabId, input);
+    yield* settleViewportIntent(
+      tabId,
+      prepared.wc,
+      prepared.intent,
+      prepared.generation,
+      (latest) => applyViewportOverride(tabId, prepared.wc, latest),
     );
   });
 
@@ -2715,10 +2755,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewViewportOverride,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    const intent = yield* rememberViewportOverride(tabId, input);
-    yield* withControlSession(tabId, wc, "resize", (send) =>
-      settleViewportIntent(tabId, wc, intent, (latest) => {
+    const prepared = yield* prepareViewportIntent(tabId, input);
+    yield* withControlSession(tabId, prepared.wc, "resize", (send) =>
+      settleViewportIntent(tabId, prepared.wc, prepared.intent, prepared.generation, (latest) => {
         if ("clear" in latest) {
           return send("Emulation.clearDeviceMetricsOverride").pipe(Effect.asVoid);
         }

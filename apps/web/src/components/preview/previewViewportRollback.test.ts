@@ -13,6 +13,7 @@ describe("shouldRollbackPreviewViewport", () => {
     expect(shouldRollbackPreviewViewport(fill, requested, requested, "server-a", "server-a")).toBe(
       true,
     );
+    expect(shouldRollbackPreviewViewport(fill, requested, fill, "server-a", "server-a")).toBe(true);
   });
 
   it("does not overwrite a newer resize, replacement server, or repeated setting", () => {

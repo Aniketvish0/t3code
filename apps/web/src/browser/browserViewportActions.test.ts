@@ -169,4 +169,41 @@ describe("browserViewportActions", () => {
       vi.useRealTimers();
     }
   });
+
+  it("releases the queue when an in-flight background mutation reaches its deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseFirst: (() => void) | undefined;
+      const firstPending = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const calls: string[] = [];
+      const timeoutError = () => new Error("background viewport mutation expired");
+      const first = runBrowserViewportMutation(
+        "tab-background-deadline",
+        async () => {
+          calls.push("first");
+          await firstPending;
+        },
+        {
+          deadlineAt: Date.now() + 1_000,
+          timeoutError,
+        },
+      );
+      const firstResult = expect(first).rejects.toThrow("background viewport mutation expired");
+      const second = runBrowserViewportMutation("tab-background-deadline", async () => {
+        calls.push("second");
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await firstResult;
+      await second;
+      expect(calls).toEqual(["first", "second"]);
+
+      releaseFirst?.();
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

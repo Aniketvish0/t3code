@@ -20,9 +20,26 @@ export class BrowserViewportCommitTimeoutError extends Error {
 const handlers = new Map<string, BrowserViewportHandler>();
 const commitTails = new Map<string, Promise<void>>();
 
+const runOperationBeforeDeadline = <A>(
+  operation: Promise<A>,
+  deadline: BrowserViewportMutationDeadline,
+): Promise<A> => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(
+      () => reject(deadline.timeoutError()),
+      Math.max(0, deadline.deadlineAt - Date.now()),
+    );
+  });
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+};
+
 const queueBrowserViewportMutation = <A>(
   tabId: string,
   start: () => Promise<A>,
+  deadline?: BrowserViewportMutationDeadline,
 ): {
   readonly started: Promise<{ readonly operation: Promise<A> }>;
   readonly execution: Promise<A>;
@@ -31,10 +48,21 @@ const queueBrowserViewportMutation = <A>(
   const started = previous
     .catch(() => undefined)
     .then(() => ({
-      operation: Promise.resolve().then(start),
+      operation:
+        deadline && Date.now() >= deadline.deadlineAt
+          ? Promise.reject<A>(deadline.timeoutError())
+          : Promise.resolve().then(start),
     }));
-  const execution = started.then(({ operation }) => operation);
-  const tail = execution.then(() => undefined);
+  const operation = started.then(({ operation: startedOperation }) => startedOperation);
+  const execution = deadline ? runOperationBeforeDeadline(operation, deadline) : operation;
+  // If this mutation reached the front, its deadline releases the queue even
+  // when the underlying request never settles. A mutation that expires while
+  // waiting still follows the prior tail and cannot overtake it.
+  const tail = started
+    .then(({ operation: startedOperation }) =>
+      deadline ? runOperationBeforeDeadline(startedOperation, deadline) : startedOperation,
+    )
+    .then(() => undefined);
   commitTails.set(tabId, tail);
   const clear = () => {
     if (commitTails.get(tabId) === tail) commitTails.delete(tabId);
@@ -53,12 +81,7 @@ export function runBrowserViewportMutation<A>(
   mutation: () => Promise<A>,
   deadline?: BrowserViewportMutationDeadline,
 ): Promise<A> {
-  return queueBrowserViewportMutation(tabId, () => {
-    if (deadline && Date.now() >= deadline.deadlineAt) {
-      return Promise.reject(deadline.timeoutError());
-    }
-    return mutation();
-  }).execution;
+  return queueBrowserViewportMutation(tabId, mutation, deadline).execution;
 }
 
 const runHandlerBeforeDeadline = (

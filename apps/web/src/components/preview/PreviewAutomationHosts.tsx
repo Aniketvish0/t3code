@@ -575,11 +575,31 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                     },
                   });
                   if (rollback._tag === "Failure") return false;
+                  const currentState = readThreadPreviewState(threadRef);
+                  const currentSetting =
+                    currentState.sessions[ready.tabId]?.viewport ?? FILL_PREVIEW_VIEWPORT;
+                  if (
+                    !shouldRollbackPreviewViewport(
+                      previousSetting,
+                      setting,
+                      currentSetting,
+                      operationServerEpoch,
+                      currentState.serverEpoch,
+                    )
+                  ) {
+                    return true;
+                  }
                   updatePreviewServerSnapshot(threadRef, rollback.value);
                   return true;
                 },
               });
             };
+            let rollbackState:
+              | {
+                  readonly previousSetting: PreviewViewportSetting;
+                  readonly serverEpoch: string | null;
+                }
+              | undefined;
             const persistViewport = async () => {
               const operationState = assertPreviewRuntimeCurrent(
                 threadRef,
@@ -589,6 +609,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               );
               const previousSetting =
                 operationState.sessions[ready.tabId]?.viewport ?? FILL_PREVIEW_VIEWPORT;
+              rollbackState = {
+                previousSetting,
+                serverEpoch: operationState.serverEpoch,
+              };
               const result = await resize({
                 environmentId,
                 input: {
@@ -597,6 +621,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   viewport: setting,
                 },
               });
+              if (Date.now() >= deadlineAt) throw timeoutError();
               if (result._tag === "Failure") {
                 return raiseAtomCommandFailure(result);
               }
@@ -607,12 +632,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               };
             };
             const mutationDeadline = { deadlineAt, timeoutError };
-            const applied = await runBrowserViewportMutation(
-              ready.runtimeTabId,
-              persistViewport,
-              mutationDeadline,
-            );
             try {
+              const applied = await runBrowserViewportMutation(
+                ready.runtimeTabId,
+                persistViewport,
+                mutationDeadline,
+              );
+              rollbackState = applied;
               // Native CDP can outlive the server request. Keep it outside the
               // shared server-mutation queue so toolbar resizes can proceed.
               await runBeforeDeadline(
@@ -645,9 +671,22 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 viewport,
               } satisfies PreviewAutomationResizeResult;
             } catch (cause) {
-              await runBrowserViewportMutation(ready.runtimeTabId, () =>
-                rollbackViewportIfCurrent(applied.previousSetting, applied.serverEpoch),
-              ).catch(() => undefined);
+              const pendingRollback = rollbackState;
+              if (pendingRollback) {
+                const rollbackDeadline = {
+                  deadlineAt: Date.now() + timeoutMs,
+                  timeoutError,
+                };
+                void runBrowserViewportMutation(
+                  ready.runtimeTabId,
+                  () =>
+                    rollbackViewportIfCurrent(
+                      pendingRollback.previousSetting,
+                      pendingRollback.serverEpoch,
+                    ),
+                  rollbackDeadline,
+                ).catch(() => undefined);
+              }
               throw cause;
             }
           }

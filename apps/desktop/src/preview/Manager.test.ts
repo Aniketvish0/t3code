@@ -1881,6 +1881,80 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("drops a viewport intent when its tab closes during native apply", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const applyStarted = Promise.withResolvers<void>();
+        const releaseApply = Promise.withResolvers<void>();
+        const firstSendCommand = vi.fn(async (method: string) => {
+          if (method === "Emulation.setDeviceMetricsOverride") {
+            applyStarted.resolve();
+            await releaseApply.promise;
+          }
+        });
+        const replacementSendCommand = vi.fn(async () => undefined);
+        const makeWebContents = (
+          id: number,
+          sendCommand: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+        ) =>
+          ({
+            id,
+            isDestroyed: () => false,
+            isDevToolsOpened: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          }) as never;
+        const first = makeWebContents(42, firstSendCommand);
+        const replacement = makeWebContents(43, replacementSendCommand);
+        fromId.mockImplementation((id) => (id === 42 ? first : id === 43 ? replacement : null));
+
+        yield* manager.createTab("tab_viewport_close");
+        yield* manager.registerWebview("tab_viewport_close", 42);
+        const setter = yield* manager
+          .setViewport("tab_viewport_close", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => applyStarted.promise);
+        yield* manager.closeTab("tab_viewport_close");
+        releaseApply.resolve();
+
+        const exit = yield* Fiber.await(setter);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewTabNotFoundError",
+          });
+        }
+
+        yield* manager.createTab("tab_viewport_close");
+        yield* manager.registerWebview("tab_viewport_close", 43);
+        yield* Effect.yieldNow;
+        expect(replacementSendCommand).not.toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.anything(),
+        );
+      }),
+    ),
+  );
+
   effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {
