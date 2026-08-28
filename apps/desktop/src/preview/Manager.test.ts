@@ -1698,7 +1698,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("applies a guest viewport override without taking agent control", () =>
+  effectIt.effect("applies logical viewport sizes without mobile emulation or a DPR override", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const sendCommand = vi.fn(async () => undefined);
@@ -1735,23 +1735,23 @@ describe("PreviewManager", () => {
             controllers.push(state.controller);
           }),
         );
-        yield* manager.createTab("tab_viewport");
+        yield* manager.createTab("tab_viewport", { zoomFactor: 0.5 });
         yield* manager.registerWebview("tab_viewport", 42);
-        yield* manager.setViewport("tab_viewport", { width: 390, height: 844 });
+        yield* manager.setViewport("tab_viewport", { width: 1024, height: 768 });
         yield* manager.setViewport("tab_viewport", { width: 844, height: 390 });
         yield* manager.setViewport("tab_viewport", { clear: true });
 
         expect(sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
-          width: 390,
-          height: 844,
-          deviceScaleFactor: 1,
-          mobile: true,
+          width: 512,
+          height: 384,
+          deviceScaleFactor: 0,
+          mobile: false,
         });
         expect(sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
-          width: 844,
-          height: 390,
-          deviceScaleFactor: 1,
-          mobile: true,
+          width: 422,
+          height: 195,
+          deviceScaleFactor: 0,
+          mobile: false,
         });
         expect(sendCommand).toHaveBeenCalledWith("Emulation.clearDeviceMetricsOverride");
         expect(controllers).not.toContain("agent");
@@ -1809,9 +1809,74 @@ describe("PreviewManager", () => {
         expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setDeviceMetricsOverride", {
           width: 390,
           height: 844,
-          deviceScaleFactor: 1,
-          mobile: true,
+          deviceScaleFactor: 0,
+          mobile: false,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("restores a newer human viewport after a queued agent resize", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const evaluationStarted = Promise.withResolvers<void>();
+        const releaseEvaluation = Promise.withResolvers<unknown>();
+        const sendCommand = vi.fn(
+          async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+            if (method === "Runtime.evaluate" && params?.expression === "holdViewportQueue") {
+              evaluationStarted.resolve();
+              return releaseEvaluation.promise;
+            }
+            return { result: { value: null } };
+          },
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_viewport_order");
+        yield* manager.registerWebview("tab_viewport_order", 42);
+        const evaluation = yield* manager
+          .automationEvaluate("tab_viewport_order", { expression: "holdViewportQueue" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => evaluationStarted.promise);
+        const resize = yield* manager
+          .automationSetViewport("tab_viewport_order", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        yield* manager.setViewport("tab_viewport_order", { width: 1440, height: 900 });
+        releaseEvaluation.resolve({ result: { value: null } });
+        yield* Fiber.join(evaluation);
+        yield* Fiber.join(resize);
+
+        const viewportCalls = sendCommand.mock.calls.filter(
+          ([method]) => method === "Emulation.setDeviceMetricsOverride",
+        );
+        expect(viewportCalls.at(-1)?.[1]).toMatchObject({ width: 1440, height: 900 });
       }),
     ),
   );

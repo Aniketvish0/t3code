@@ -2,6 +2,11 @@ import type { PreviewViewportSetting } from "@t3tools/contracts";
 
 type BrowserViewportHandler = (setting: PreviewViewportSetting) => Promise<void>;
 
+interface BrowserViewportMutationDeadline {
+  readonly deadlineAt: number;
+  readonly timeoutError: () => Error;
+}
+
 export const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
 
 export class BrowserViewportCommitTimeoutError extends Error {
@@ -46,16 +51,26 @@ const queueBrowserViewportMutation = <A>(
 export function runBrowserViewportMutation<A>(
   tabId: string,
   mutation: () => Promise<A>,
+  deadline?: BrowserViewportMutationDeadline,
 ): Promise<A> {
-  return queueBrowserViewportMutation(tabId, mutation).execution;
+  return queueBrowserViewportMutation(tabId, () => {
+    if (deadline && Date.now() >= deadline.deadlineAt) {
+      return Promise.reject(deadline.timeoutError());
+    }
+    return mutation();
+  }).execution;
 }
 
-const runHandlerWithTimeout = (tabId: string, operation: Promise<void>): Promise<void> => {
+const runHandlerBeforeDeadline = (
+  tabId: string,
+  operation: Promise<void>,
+  deadlineAt: number,
+): Promise<void> => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(
       () => reject(new BrowserViewportCommitTimeoutError(tabId)),
-      BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
+      Math.max(0, deadlineAt - Date.now()),
     );
   });
   return Promise.race([operation, timeout]).finally(() => {
@@ -77,14 +92,15 @@ export function commitBrowserViewportChange(
   tabId: string,
   setting: PreviewViewportSetting,
 ): Promise<void> {
-  const { started } = queueBrowserViewportMutation(tabId, () => {
+  const deadlineAt = Date.now() + BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS;
+  const { execution } = queueBrowserViewportMutation(tabId, () => {
+    if (Date.now() >= deadlineAt) {
+      return Promise.reject(new BrowserViewportCommitTimeoutError(tabId));
+    }
     const handler = handlers.get(tabId);
     return handler
       ? handler(setting)
       : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
   });
-  // The queue follows the real handler lifetime, while the caller-facing
-  // timeout starts only once this commit reaches the front of that queue.
-  const result = started.then(({ operation }) => runHandlerWithTimeout(tabId, operation));
-  return result;
+  return runHandlerBeforeDeadline(tabId, execution, deadlineAt);
 }

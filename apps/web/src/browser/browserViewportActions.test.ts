@@ -117,21 +117,53 @@ describe("browserViewportActions", () => {
       const firstResult = expect(first).rejects.toThrow(
         "Timed out committing the browser viewport for tab tab-timeout",
       );
-      const second = commitBrowserViewportChange("tab-timeout", {
-        _tag: "freeform",
-        width: 900,
-        height: 700,
-      });
 
       await vi.advanceTimersByTimeAsync(BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS);
       await firstResult;
       expect(handler).toHaveBeenCalledTimes(1);
 
+      const second = commitBrowserViewportChange("tab-timeout", {
+        _tag: "freeform",
+        width: 900,
+        height: 700,
+      });
       releaseFirst?.();
       await second;
 
       expect(handler).toHaveBeenCalledTimes(2);
       expect(handler.mock.calls[1]?.[0]).toMatchObject({ width: 900, height: 700 });
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires a queued commit before its handler can write", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseBackground: (() => void) | undefined;
+      const backgroundPending = new Promise<void>((resolve) => {
+        releaseBackground = resolve;
+      });
+      const background = runBrowserViewportMutation("tab-queued-timeout", () => backgroundPending);
+      const handler = vi.fn(async () => undefined);
+      const unsubscribe = subscribeBrowserViewportChange("tab-queued-timeout", handler);
+      const commit = commitBrowserViewportChange("tab-queued-timeout", {
+        _tag: "freeform",
+        width: 900,
+        height: 700,
+      });
+      const result = expect(commit).rejects.toThrow(
+        "Timed out committing the browser viewport for tab tab-queued-timeout",
+      );
+
+      await vi.advanceTimersByTimeAsync(BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS);
+      await result;
+      releaseBackground?.();
+      await background;
+      await vi.runAllTimersAsync();
+
+      expect(handler).not.toHaveBeenCalled();
       unsubscribe();
     } finally {
       vi.useRealTimers();

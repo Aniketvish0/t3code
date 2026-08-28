@@ -98,6 +98,14 @@ export interface PreviewTabState {
   updatedAt: string;
 }
 
+type PreviewViewportOverride =
+  | { readonly width: number; readonly height: number }
+  | { readonly clear: true };
+
+interface PreviewViewportIntent {
+  readonly input: PreviewViewportOverride;
+}
+
 /** Discrete zoom levels mirroring Chrome's preset list. */
 const ZOOM_LEVELS: ReadonlyArray<number> = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
@@ -574,7 +582,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const viewportOverridesRef = yield* SynchronizedRef.make<
-    ReadonlyMap<string, { readonly width: number; readonly height: number }>
+    ReadonlyMap<string, PreviewViewportIntent>
   >(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
@@ -2564,7 +2572,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
       const viewportOverride = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
       if (viewportOverride) {
-        yield* applyViewportOverride(tabId, wc, viewportOverride);
+        yield* applyViewportOverride(tabId, wc, viewportOverride.input);
       }
     }).pipe(Effect.ignore);
 
@@ -2624,61 +2632,101 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  const deviceMetricsOverride = (input: { readonly width: number; readonly height: number }) => ({
-    width: input.width,
-    height: input.height,
-    deviceScaleFactor: 1,
-    // Shortest side, so landscape phones stay mobile (844x390, not width-only).
-    mobile: Math.min(input.width, input.height) < 768,
+  const deviceMetricsOverride = Effect.fnUntraced(function* (
+    tabId: string,
+    input: { readonly width: number; readonly height: number },
+  ) {
+    const zoomFactor = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.zoomFactor ?? 1;
+    return {
+      width: Math.max(1, Math.round(input.width * zoomFactor)),
+      height: Math.max(1, Math.round(input.height * zoomFactor)),
+      // Zero leaves Chromium's current device scale factor unchanged.
+      deviceScaleFactor: 0,
+      // A fixed CSS viewport is not full mobile-device emulation. Setting this
+      // true also changes Chromium's layout viewport when the page has no
+      // viewport meta tag.
+      mobile: false,
+    };
   });
 
-  const rememberViewportOverride = (
-    tabId: string,
-    input: { readonly width: number; readonly height: number } | { readonly clear: true },
-  ) =>
-    SynchronizedRef.update(viewportOverridesRef, (overrides) =>
-      replaceMap(overrides, (copy) => {
-        if ("clear" in input) copy.delete(tabId);
-        else copy.set(tabId, { width: input.width, height: input.height });
-      }),
-    );
+  const rememberViewportOverride = (tabId: string, input: PreviewViewportOverride) =>
+    SynchronizedRef.modify(viewportOverridesRef, (overrides) => {
+      const intent: PreviewViewportIntent = { input };
+      return [
+        intent,
+        replaceMap(overrides, (copy) => {
+          copy.set(tabId, intent);
+        }),
+      ] as const;
+    });
 
   const applyViewportOverride = Effect.fn("PreviewManager.applyViewportOverride")(function* (
     tabId: string,
     wc: Electron.WebContents,
-    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    input: PreviewViewportOverride,
   ) {
     yield* ensureControlSession(wc);
+    if ("clear" in input) {
+      yield* attemptPromise(
+        { operation: "applyViewportOverride", tabId, webContentsId: wc.id },
+        () => wc.debugger.sendCommand("Emulation.clearDeviceMetricsOverride"),
+      );
+      return;
+    }
+    const metrics = yield* deviceMetricsOverride(tabId, input);
     yield* attemptPromise({ operation: "applyViewportOverride", tabId, webContentsId: wc.id }, () =>
-      "clear" in input
-        ? wc.debugger.sendCommand("Emulation.clearDeviceMetricsOverride")
-        : wc.debugger.sendCommand(
-            "Emulation.setDeviceMetricsOverride",
-            deviceMetricsOverride(input),
-          ),
+      wc.debugger.sendCommand("Emulation.setDeviceMetricsOverride", metrics),
     );
+  });
+
+  const settleViewportIntent = Effect.fnUntraced(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    intent: PreviewViewportIntent,
+    applyInitial: (input: PreviewViewportOverride) => Effect.Effect<void, PreviewManagerError>,
+  ) {
+    const reconcileLatest = Effect.gen(function* () {
+      let applied = intent;
+      while (true) {
+        const latest = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
+        if (!latest || latest === applied) return;
+        const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (current?.webContentsId !== wc.id || wc.isDestroyed()) return;
+        yield* applyViewportOverride(tabId, wc, latest.input);
+        applied = latest;
+      }
+    });
+    yield* applyInitial(intent.input).pipe(Effect.ensuring(reconcileLatest.pipe(Effect.ignore)));
   });
 
   // Human/toolbar path. Must not take agent control or write a resize action.
   const setViewport = Effect.fn("PreviewManager.setViewport")(function* (
     tabId: string,
-    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    input: PreviewViewportOverride,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* rememberViewportOverride(tabId, input);
-    yield* applyViewportOverride(tabId, wc, input);
+    const intent = yield* rememberViewportOverride(tabId, input);
+    yield* settleViewportIntent(tabId, wc, intent, (latest) =>
+      applyViewportOverride(tabId, wc, latest),
+    );
   });
 
   const automationSetViewport = Effect.fn("PreviewManager.automationSetViewport")(function* (
     tabId: string,
-    input: { readonly width: number; readonly height: number } | { readonly clear: true },
+    input: PreviewViewportOverride,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* rememberViewportOverride(tabId, input);
+    const intent = yield* rememberViewportOverride(tabId, input);
     yield* withControlSession(tabId, wc, "resize", (send) =>
-      "clear" in input
-        ? send("Emulation.clearDeviceMetricsOverride")
-        : send("Emulation.setDeviceMetricsOverride", deviceMetricsOverride(input)),
+      settleViewportIntent(tabId, wc, intent, (latest) => {
+        if ("clear" in latest) {
+          return send("Emulation.clearDeviceMetricsOverride").pipe(Effect.asVoid);
+        }
+        return deviceMetricsOverride(tabId, latest).pipe(
+          Effect.flatMap((metrics) => send("Emulation.setDeviceMetricsOverride", metrics)),
+          Effect.asVoid,
+        );
+      }),
     );
   });
 

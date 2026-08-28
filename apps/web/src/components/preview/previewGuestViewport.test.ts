@@ -19,22 +19,11 @@ describe("previewGuestViewportOverride", () => {
     ).toEqual({ width: 390, height: 844 });
   });
 
-  it("scales desktop overrides by page zoom so innerWidth matches the toolbar", () => {
-    expect(
-      previewGuestViewportOverride({ _tag: "freeform", width: 1024, height: 768 }, 1.25),
-    ).toEqual({ width: 1280, height: 960 });
-  });
-
-  it("does not scale phone sizes; mobile emulation pins page zoom to 1", () => {
-    expect(
-      previewGuestViewportOverride(
-        { _tag: "preset", presetId: "iphone-12-pro", width: 390, height: 844 },
-        1.25,
-      ),
-    ).toEqual({ width: 390, height: 844 });
-    expect(
-      previewGuestViewportOverride({ _tag: "freeform", width: 844, height: 390 }, 1.25),
-    ).toEqual({ width: 844, height: 390 });
+  it("leaves page-zoom conversion to the desktop manager", () => {
+    expect(previewGuestViewportOverride({ _tag: "freeform", width: 1024, height: 768 })).toEqual({
+      width: 1024,
+      height: 768,
+    });
   });
 });
 
@@ -43,16 +32,11 @@ describe("applyPreviewGuestViewport", () => {
     await applyPreviewGuestViewport(undefined, "tab-1", { _tag: "fill" });
 
     const setViewport = vi.fn(async () => undefined);
-    await applyPreviewGuestViewport(
-      setViewport,
-      "tab-1",
-      {
-        _tag: "freeform",
-        width: 1024,
-        height: 768,
-      },
-      1.25,
-    );
-    expect(setViewport).toHaveBeenCalledWith("tab-1", { width: 1280, height: 960 });
+    await applyPreviewGuestViewport(setViewport, "tab-1", {
+      _tag: "freeform",
+      width: 1024,
+      height: 768,
+    });
+    expect(setViewport).toHaveBeenCalledWith("tab-1", { width: 1024, height: 768 });
   });
 });
