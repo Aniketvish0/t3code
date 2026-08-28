@@ -32,7 +32,7 @@ import { FileDiff } from "@pierre/diffs/react";
 import {
   type TimelineEntry,
   providerErrorPresentation,
-  workEntryIndicatesToolFailure,
+  workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
@@ -2681,7 +2681,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null || workEntry.projectedItem !== undefined;
-  const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
+  const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle = showFailedIndicator && !workLogEntryIsToolLike(workEntry);
   const iconWrapperClass = cn(
     "flex size-5 shrink-0 items-center justify-center",
