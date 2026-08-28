@@ -252,7 +252,7 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
             }
           })();
     const serverRevisionByTabId = (() => {
-      if (!next.sessions[event.tabId]) {
+      if (!next.sessions[event.tabId] && !next.suppressedTabIds.has(event.tabId)) {
         if (current.serverRevisionByTabId[event.tabId] === undefined) {
           return current.serverRevisionByTabId;
         }

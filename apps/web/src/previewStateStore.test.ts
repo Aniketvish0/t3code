@@ -639,6 +639,56 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
   });
 
+  it("retains ignored event revisions until a failed close restores the tab", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    beginPreviewSessionClose(ref, snapshot.tabId);
+
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      serverEpoch,
+      revision: 3,
+      snapshot: {
+        ...snapshot,
+        viewport: { _tag: "freeform", width: 1200, height: 800 },
+        updatedAt: "2026-01-01T00:00:03.000Z",
+      },
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      serverEpoch,
+      revision: 2,
+      snapshot: {
+        ...snapshot,
+        viewport: { _tag: "freeform", width: 1000, height: 700 },
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      },
+    });
+    expect(readThreadPreviewState(ref).serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
+
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:04.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(snapshot);
+    expect(state.serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
+  });
+
   it("accepts a newer list that reuses a closed tab id", () => {
     const original = makeSnapshot();
     reconcilePreviewServerSessions(ref, {
