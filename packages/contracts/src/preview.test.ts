@@ -6,8 +6,11 @@ import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   DiscoveredLocalServer,
   PREVIEW_URL_MAX_LENGTH,
+  PreviewError,
   PreviewEvent,
   PreviewNavStatus,
+  PreviewResizeInput,
+  PreviewResizeResult,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
 } from "./preview.ts";
@@ -23,6 +26,10 @@ import {
 
 const decodePreviewEvent = Schema.decodeUnknownSync(PreviewEvent);
 const decodeSnapshot = Schema.decodeUnknownSync(PreviewSessionSnapshot);
+const decodePreviewError = Schema.decodeUnknownSync(PreviewError);
+const decodePreviewResizeInput = Schema.decodeUnknownSync(PreviewResizeInput);
+const decodePreviewResizeResult = Schema.decodeUnknownSync(PreviewResizeResult);
+const encodePreviewResizeResult = Schema.encodeSync(PreviewResizeResult);
 const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
 const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
 const decodeConfiguredLocalServerUrls = Schema.decodeUnknownSync(ConfiguredLocalServerUrls);
@@ -123,6 +130,70 @@ describe("PreviewViewportSetting", () => {
   it("rejects unsafe dimensions and oversized render areas", () => {
     expect(() => decodeViewport({ _tag: "freeform", width: 100, height: 800 })).toThrow();
     expect(() => decodeViewport({ _tag: "freeform", width: 3840, height: 3840 })).toThrow();
+  });
+});
+
+describe("PreviewResizeInput and PreviewResizeResult", () => {
+  const snapshot = {
+    threadId: "thread-1",
+    tabId: "preview-thread-1",
+    navStatus: { _tag: "Idle" as const },
+    canGoBack: false,
+    canGoForward: false,
+    viewport: { _tag: "freeform" as const, width: 1024, height: 768 },
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("accepts old resize messages and guarded rollback messages", () => {
+    expect(
+      decodePreviewResizeInput({
+        threadId: "thread-1",
+        tabId: "preview-thread-1",
+        viewport: { _tag: "fill" },
+      }),
+    ).not.toHaveProperty("expectedStateVersion");
+    expect(
+      decodePreviewResizeInput({
+        threadId: "thread-1",
+        tabId: "preview-thread-1",
+        viewport: { _tag: "fill" },
+        expectedStateVersion: { serverEpoch: "server-a", revision: 2 },
+      }).expectedStateVersion,
+    ).toEqual({ serverEpoch: "server-a", revision: 2 });
+  });
+
+  it("decodes old results and exposes the write version from new servers", () => {
+    expect(decodePreviewResizeResult(snapshot)).not.toHaveProperty("stateVersion");
+    expect(
+      decodePreviewResizeResult({
+        ...snapshot,
+        stateVersion: { serverEpoch: "server-a", revision: 2 },
+        previousViewport: { _tag: "fill" },
+      }),
+    ).toMatchObject({
+      stateVersion: { serverEpoch: "server-a", revision: 2 },
+      previousViewport: { _tag: "fill" },
+    });
+  });
+
+  it("keeps new resize results readable as old session snapshots", () => {
+    const encoded = encodePreviewResizeResult({
+      ...snapshot,
+      stateVersion: { serverEpoch: "server-a", revision: 2 },
+      previousViewport: { _tag: "fill" },
+    });
+    expect(decodeSnapshot(encoded)).toMatchObject(snapshot);
+  });
+
+  it("decodes a typed viewport write conflict", () => {
+    const error = decodePreviewError({
+      _tag: "PreviewResizeConflictError",
+      threadId: "thread-1",
+      tabId: "preview-thread-1",
+      expectedStateVersion: { serverEpoch: "server-a", revision: 2 },
+      actualStateVersion: { serverEpoch: "server-a", revision: 4 },
+    });
+    expect(error._tag).toBe("PreviewResizeConflictError");
   });
 });
 

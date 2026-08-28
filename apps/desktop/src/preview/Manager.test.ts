@@ -1759,6 +1759,88 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("converts logical viewport sizes at each supported test zoom", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const cases = [
+          { tabId: "tab_zoom_50", webContentsId: 50, zoomFactor: 0.5, width: 512, height: 384 },
+          { tabId: "tab_zoom_80", webContentsId: 80, zoomFactor: 0.8, width: 819, height: 614 },
+          { tabId: "tab_zoom_100", webContentsId: 100, zoomFactor: 1, width: 1024, height: 768 },
+          {
+            tabId: "tab_zoom_125",
+            webContentsId: 125,
+            zoomFactor: 1.25,
+            width: 1280,
+            height: 960,
+          },
+        ] as const;
+        const commandsById = new Map(
+          cases.map(
+            ({ webContentsId }) =>
+              [
+                webContentsId,
+                vi.fn(async (_method: string, _params?: Record<string, unknown>) => undefined),
+              ] as const,
+          ),
+        );
+        const webContentsById = new Map<number, unknown>();
+        for (const { webContentsId } of cases) {
+          webContentsById.set(webContentsId, {
+            id: webContentsId,
+            isDestroyed: () => false,
+            isDevToolsOpened: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand: commandsById.get(webContentsId),
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          });
+        }
+        fromId.mockImplementation(
+          (id) => (id === undefined ? null : (webContentsById.get(id) ?? null)) as never,
+        );
+
+        for (const testCase of cases) {
+          yield* manager.createTab(testCase.tabId, { zoomFactor: testCase.zoomFactor });
+          yield* manager.registerWebview(testCase.tabId, testCase.webContentsId);
+          yield* manager.automationSetViewport(testCase.tabId, { width: 1024, height: 768 });
+          const viewportCalls = commandsById
+            .get(testCase.webContentsId)
+            ?.mock.calls.filter(([method]) => method.includes("DeviceMetrics"));
+          const expectedCall = [
+            "Emulation.setDeviceMetricsOverride",
+            {
+              width: testCase.width,
+              height: testCase.height,
+              deviceScaleFactor: 0,
+              mobile: false,
+            },
+          ];
+          expect(viewportCalls?.length).toBeGreaterThanOrEqual(1);
+          for (const call of viewportCalls ?? []) {
+            expect(call).toEqual(expectedCall);
+          }
+        }
+      }),
+    ),
+  );
+
   effectIt.effect("restores the latest viewport when a webview swap races a newer setting", () =>
     withManager((manager) =>
       Effect.gen(function* () {
