@@ -136,20 +136,31 @@ a disposable relay stage, test Cloudflare account, disposable host, disposable T
 environment link. Keep production cleanup at `off` or `dry-run` until this canary passes. Do not stop
 a daily-use T3 server or disable the whole machine's network.
 
-1. Deploy the disposable relay stage with cleanup set to `dry-run`. Link the disposable environment
-   and confirm that its tunnel is healthy and recovery is registered.
-2. Capture the PID of that environment's managed `cloudflared` child from its server logs. Confirm
-   that the PID belongs to the disposable T3 process.
-3. Pause only that captured child with `kill -STOP <pid>`. Wait until Cloudflare reports the tunnel
+1. Deploy the disposable relay stage with cleanup set to `dry-run`. Link the first disposable
+   environment through web or mobile settings, then confirm that its tunnel is healthy and recovery
+   is registered.
+2. Stop the first test host and restart the same T3 home on a different local port. A web or mobile
+   link preserves its existing tunnel during this restart, so this exercises origin reconciliation.
+   Confirm the public hostname reaches the new port after registration. Keep the prior port closed or
+   attach a request logger to it, and confirm the public hostname does not send requests to that port.
+3. Link a second disposable environment with a server build that predates recovery registration.
+   Capture its managed `cloudflared` child PID and confirm that it belongs to the second test host.
+   Pause only that child with `kill -STOP <legacy-pid>` while its T3 server stays running. Wait until
+   Cloudflare reports the legacy tunnel as down for more than five minutes.
+4. Capture the PID of the first environment's managed `cloudflared` child from its server logs.
+   Confirm that the PID belongs to the first test host.
+5. Pause only that captured child with `kill -STOP <first-pid>`. Wait until Cloudflare reports the tunnel
    as down for more than five minutes.
-4. Confirm that dry-run logs count the tunnel in `wouldDelete` without deleting it.
-5. Set cleanup to `enabled` on the disposable relay stage and deploy it. Confirm through the test
-   Cloudflare account that the old tunnel is deleted. Allow up to ten minutes plus any reported
-   backlog.
-6. Resume only the captured child with `kill -CONT <pid>`. Confirm that the running server detects
+6. Confirm that dry-run logs count the first tunnel in `wouldDelete` without deleting it. Confirm the
+   second tunnel remains `skippedLegacy`.
+7. Set cleanup to `enabled` on the disposable relay stage and deploy it. Confirm through the test
+   Cloudflare account that the first tunnel is deleted and the legacy tunnel still exists. Allow up
+   to ten minutes plus any reported backlog.
+8. Resume only the first child with `kill -CONT <first-pid>`. Confirm that the running server detects
    repeated tunnel authorization rejection, requests recovery, starts a replacement tunnel, and
    becomes reachable at the same public hostname without a server restart.
-7. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
+9. Resume the legacy child with `kill -CONT <legacy-pid>` and confirm its original tunnel reconnects.
+10. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
 
 To roll back, set cleanup to `off` and deploy the relay before downgrading any host. Keep the recovery
 endpoints deployed while current server builds are in use. Downgrading a host that has registered
