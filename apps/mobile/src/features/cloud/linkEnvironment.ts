@@ -303,6 +303,7 @@ export function linkEnvironmentToCloudWithPreference(
       .linkEnvironment({
         clerkToken: input.clerkToken,
         payload: {
+          intent: "explicit",
           deviceId,
           proof,
           notificationsEnabled: true,

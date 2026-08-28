@@ -41,6 +41,7 @@ import {
   RelayEnvironmentEndpointTimedOutError,
   RelayEnvironmentEndpointUnavailableError,
   RelayEnvironmentLinkFailedError,
+  RelayEnvironmentLinkRevokedError,
   RelayEnvironmentLinkProofExpiredError,
   RelayEnvironmentLinkProofInvalidError,
   RelayEnvironmentLinkUnavailableError,
@@ -456,12 +457,23 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     // revocation commits so a database failure leaves a fully usable active
     // link. Still run teardown when the link is already revoked, allowing a
     // retry to finish cleanup after an earlier Cloudflare failure.
-    yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-      target: deprovisionTarget,
-    });
-    return unlinked;
+    const cleanupPending = yield* managedEndpointProvider
+      .deprovision({
+        userId: input.userId,
+        environmentId: input.environmentId,
+        target: deprovisionTarget,
+      })
+      .pipe(
+        Effect.as(false),
+        Effect.catchTag("ManagedEndpointDeprovisioningFailed", (error) =>
+          Effect.logWarning("Managed endpoint cleanup remains pending after unlink", {
+            userId: input.userId,
+            environmentId: input.environmentId,
+            stage: error.stage,
+          }).pipe(Effect.as(true)),
+        ),
+      );
+    return { unlinked, cleanupPending };
   },
 );
 
@@ -536,9 +548,12 @@ export const clientApi = HttpApiBuilder.group(
     return handlers
       .handle(
         "listEnvironments",
-        Effect.fn("relay.api.client.listEnvironments")(function* () {
+        Effect.fn("relay.api.client.listEnvironments")(function* (args) {
           const { userId } = yield* RelayClientPrincipal;
-          const environments = yield* links.listForUser({ userId });
+          const environments = yield* links.listForUser({
+            userId,
+            includeCleanupPending: args.query.includeCleanupPending ?? false,
+          });
           return { environments };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
@@ -610,6 +625,11 @@ export const clientApi = HttpApiBuilder.group(
                 reason: "link_persistence_failed",
                 traceId,
               }),
+            EnvironmentLinkRevoked: (_error, traceId) =>
+              new RelayEnvironmentLinkRevokedError({
+                code: "environment_link_revoked",
+                traceId,
+              }),
             EnvironmentCredentialCreatePersistenceError: (_error, traceId) =>
               new RelayEnvironmentLinkFailedError({
                 code: "environment_link_failed",
@@ -653,7 +673,7 @@ export const clientApi = HttpApiBuilder.group(
         Effect.fn("relay.api.client.unlinkEnvironment")(function* (args) {
           const { params } = args;
           const { userId } = yield* RelayClientPrincipal;
-          const unlinked = yield* unlinkEnvironmentRecord({
+          const result = yield* unlinkEnvironmentRecord({
             userId,
             environmentId: params.environmentId,
           }).pipe(
@@ -663,7 +683,7 @@ export const clientApi = HttpApiBuilder.group(
                 relayInternalErrorResponse("upstream_unavailable"),
             }),
           );
-          return { ok: unlinked };
+          return { ok: result.unlinked, cleanupPending: result.cleanupPending };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

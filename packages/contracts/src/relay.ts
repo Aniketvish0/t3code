@@ -253,6 +253,11 @@ export type RelayEnvironmentLinkChallengeResponse =
   typeof RelayEnvironmentLinkChallengeResponse.Type;
 
 export const RelayEnvironmentLinkRequest = Schema.Struct({
+  intent: Schema.optional(
+    Schema.Literal("explicit").annotate({
+      description: "Confirms that the user explicitly requested this link or relink.",
+    }),
+  ),
   deviceId: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description: "Optional client device identifier associated with this link.",
@@ -453,6 +458,19 @@ export class RelayEnvironmentLinkFailedError extends Schema.TaggedErrorClass<Rel
   }
 }
 
+export class RelayEnvironmentLinkRevokedError extends Schema.TaggedErrorClass<RelayEnvironmentLinkRevokedError>()(
+  "RelayEnvironmentLinkRevokedError",
+  {
+    code: Schema.Literal("environment_link_revoked"),
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 409 },
+) {
+  override get message(): string {
+    return "Relay environment link was removed from the account";
+  }
+}
+
 export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedErrorClass<RelayEnvironmentLinkUnavailableError>()(
   "RelayEnvironmentLinkUnavailableError",
   {
@@ -530,6 +548,7 @@ export const RelayProtectedError = Schema.Union([
   RelayEnvironmentEndpointUnavailableError,
   RelayEnvironmentEndpointTimedOutError,
   RelayEnvironmentLinkFailedError,
+  RelayEnvironmentLinkRevokedError,
   RelayEnvironmentLinkUnavailableError,
   RelayEnvironmentLinkLimitExceededError,
   RelayAgentActivityPublishProofExpiredError,
@@ -547,6 +566,7 @@ const RelayEnvironmentLinkErrors = [
   RelayEnvironmentLinkUnavailableError,
   RelayEnvironmentLinkLimitExceededError,
   RelayEnvironmentLinkFailedError,
+  RelayEnvironmentLinkRevokedError,
   RelayInternalError,
 ] as const;
 
@@ -633,6 +653,7 @@ export const RelayClientEnvironmentRecord = Schema.Struct({
   label: TrimmedNonEmptyString,
   endpoint: RelayManagedEndpoint,
   linkedAt: TrimmedNonEmptyString,
+  cleanupPending: Schema.optional(Schema.Boolean),
 });
 export type RelayClientEnvironmentRecord = typeof RelayClientEnvironmentRecord.Type;
 
@@ -640,6 +661,12 @@ export const RelayListEnvironmentsResponse = Schema.Struct({
   environments: Schema.Array(RelayClientEnvironmentRecord),
 });
 export type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
+
+export const RelayEnvironmentUnlinkResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  cleanupPending: Schema.optional(Schema.Boolean),
+});
+export type RelayEnvironmentUnlinkResponse = typeof RelayEnvironmentUnlinkResponse.Type;
 
 export const RelayEnvironmentConnectRequest = Schema.Struct({
   deviceId: Schema.optional(
@@ -960,6 +987,9 @@ export const RelayClientGroup = HttpApiGroup.make("client")
   .add(
     HttpApiEndpoint.get("listEnvironments", "/v1/environments", {
       headers: RelayBearerRequestHeaders,
+      query: {
+        includeCleanupPending: Schema.optional(Schema.Boolean),
+      },
       success: RelayListEnvironmentsResponse,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "List linked environments"),
@@ -987,7 +1017,7 @@ export const RelayClientGroup = HttpApiGroup.make("client")
     HttpApiEndpoint.delete("unlinkEnvironment", "/v1/client/environment-links/:environmentId", {
       headers: RelayBearerRequestHeaders,
       params: RelayEnvironmentUnlinkParams,
-      success: RelayOkResponse,
+      success: RelayEnvironmentUnlinkResponse,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "Unlink an environment"),
     HttpApiEndpoint.delete(

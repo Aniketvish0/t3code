@@ -415,6 +415,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
       .linkEnvironment({
         clerkToken: input.clerkToken,
         payload: {
+          intent: "explicit",
           proof,
           notificationsEnabled: true,
           liveActivitiesEnabled: true,
