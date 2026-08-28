@@ -42,6 +42,7 @@ import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -212,6 +213,7 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
     />
   );
 }
+
 function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
@@ -1144,7 +1146,7 @@ export function ProviderInstanceCard({
           ) : null}
         </div>
         {driverOption !== undefined ? (
-          <div hidden={visibleTab !== "models"}>
+          <div className="px-4 py-5 lg:h-full lg:min-h-0" hidden={visibleTab !== "models"}>
             <ProviderModelsSection
               instanceId={instanceId}
               driverKind={driverKind}
