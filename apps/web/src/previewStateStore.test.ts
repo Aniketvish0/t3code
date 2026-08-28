@@ -557,10 +557,128 @@ describe("previewStateStore (single-tab)", () => {
     const state = readThreadPreviewState(ref);
     expect(state.sessions).toEqual({ [second.tabId]: resizedSecond });
     expect(state.serverRevision).toBe(5);
-    expect(state.serverRevisionByTabId).toMatchObject({
-      [first.tabId]: 5,
+    expect(state.serverRevisionByTabId).toEqual({
       [second.tabId]: 6,
     });
+  });
+
+  it("rejects a late resize response after pruning a closed tab revision", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      serverEpoch,
+      revision: 3,
+    });
+
+    expect(readThreadPreviewState(ref).serverRevisionByTabId).toEqual({});
+
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:04.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({});
+    expect(state.serverRevisionByTabId).toEqual({});
+  });
+
+  it("prunes tab revisions that an authoritative list removes", () => {
+    const closed = makeSnapshot({ tabId: "tab_closed" });
+    const active = makeSnapshot({ tabId: "tab_active" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [closed, active],
+      serverEpoch,
+      revision: 1,
+    });
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [active],
+      serverEpoch,
+      revision: 2,
+    });
+
+    expect(readThreadPreviewState(ref).serverRevisionByTabId).toEqual({
+      [active.tabId]: 2,
+    });
+  });
+
+  it("retains a pending-close revision until a failed close restores the tab", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    beginPreviewSessionClose(ref, snapshot.tabId);
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 3,
+    });
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:04.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(snapshot);
+    expect(state.serverRevisionByTabId).toEqual({ [snapshot.tabId]: 3 });
+  });
+
+  it("accepts a newer list that reuses a closed tab id", () => {
+    const original = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [original],
+      serverEpoch,
+      revision: 1,
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: original.tabId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      serverEpoch,
+      revision: 2,
+    });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [original],
+      serverEpoch,
+      revision: 1,
+    });
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [
+        makeSnapshot({
+          navStatus: { _tag: "Success", url: "https://reopened.example", title: "Reopened" },
+          updatedAt: "2026-01-01T00:00:03.000Z",
+        }),
+      ],
+      serverEpoch,
+      revision: 3,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[original.tabId]?.navStatus).toEqual({
+      _tag: "Success",
+      url: "https://reopened.example",
+      title: "Reopened",
+    });
+    expect(state.serverRevisionByTabId).toEqual({ [original.tabId]: 3 });
   });
 
   it("keeps a tab-specific resize newer than an in-flight list response", () => {

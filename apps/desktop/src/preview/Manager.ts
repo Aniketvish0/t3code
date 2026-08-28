@@ -584,6 +584,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const viewportOverridesRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, PreviewViewportIntent>
   >(new Map());
+  const viewportIntentPredecessors = new WeakMap<
+    PreviewViewportIntent,
+    PreviewViewportIntent | undefined
+  >();
+  const rejectedViewportIntents = new WeakSet<PreviewViewportIntent>();
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
   const pointerEventListenersRef = yield* Ref.make<ReadonlySet<PointerEventListener>>(new Set());
@@ -2658,12 +2663,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const rememberViewportOverride = (tabId: string, input: PreviewViewportOverride) =>
     SynchronizedRef.modify(viewportOverridesRef, (overrides) => {
       const intent: PreviewViewportIntent = { input };
+      viewportIntentPredecessors.set(intent, overrides.get(tabId));
       return [
         intent,
         replaceMap(overrides, (copy) => {
           copy.set(tabId, intent);
         }),
       ] as const;
+    });
+
+  const restorePreviousViewportOverride = (tabId: string, intent: PreviewViewportIntent) =>
+    SynchronizedRef.modify(viewportOverridesRef, (overrides) => {
+      rejectedViewportIntents.add(intent);
+      if (overrides.get(tabId) !== intent) return [false, overrides] as const;
+      let previousIntent = viewportIntentPredecessors.get(intent);
+      while (previousIntent && rejectedViewportIntents.has(previousIntent)) {
+        previousIntent = viewportIntentPredecessors.get(previousIntent);
+      }
+      return [
+        true,
+        replaceMap(overrides, (copy) => {
+          if (previousIntent) copy.set(tabId, previousIntent);
+          else copy.delete(tabId);
+        }),
+      ] as const;
+    });
+
+  const acceptViewportOverride = (intent: PreviewViewportIntent) =>
+    Effect.sync(() => {
+      viewportIntentPredecessors.delete(intent);
     });
 
   const prepareViewportIntent = (tabId: string, input: PreviewViewportOverride) =>
@@ -2702,6 +2730,41 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const reconcileViewportRollback = Effect.fnUntraced(function* (
+    tabId: string,
+    generation: number | undefined,
+  ) {
+    let applied: PreviewViewportIntent | undefined;
+    let appliedWebContents: Electron.WebContents | undefined;
+    while (true) {
+      if (
+        tabLifecycleGenerations.get(tabId) !== generation ||
+        (yield* Ref.get(closingTabIdsRef)).has(tabId)
+      ) {
+        return;
+      }
+      const latest = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
+      const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      if (!current || current.webContentsId == null) return;
+      const currentWebContents = webContents.fromId(current.webContentsId);
+      if (!currentWebContents || currentWebContents.isDestroyed()) return;
+      if (latest === applied && currentWebContents === appliedWebContents) return;
+      yield* applyViewportOverride(tabId, currentWebContents, latest?.input ?? { clear: true });
+      applied = latest;
+      appliedWebContents = currentWebContents;
+    }
+  });
+
+  const rollbackViewportOverride = (
+    tabId: string,
+    intent: PreviewViewportIntent,
+    generation: number | undefined,
+  ) =>
+    Effect.gen(function* () {
+      const restored = yield* restorePreviousViewportOverride(tabId, intent);
+      if (restored) yield* reconcileViewportRollback(tabId, generation);
+    }).pipe(Effect.ignore);
+
   const settleViewportIntent = Effect.fnUntraced(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -2710,10 +2773,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     applyInitial: (input: PreviewViewportOverride) => Effect.Effect<void, PreviewManagerError>,
   ) {
     const initialExit = yield* Effect.exit(applyInitial(intent.input));
+    if (Exit.isFailure(initialExit)) return yield* Effect.failCause(initialExit.cause);
     const reconcileExit = yield* Effect.exit(
       Effect.gen(function* () {
-        let applied = Exit.isSuccess(initialExit) ? intent : undefined;
-        let appliedWebContents = Exit.isSuccess(initialExit) ? wc : undefined;
+        let applied = intent;
+        let appliedWebContents = wc;
         while (true) {
           const latest = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
           if (!latest || tabLifecycleGenerations.get(tabId) !== generation) {
@@ -2738,7 +2802,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
       }),
     );
-    if (Exit.isFailure(initialExit)) return yield* Effect.failCause(initialExit.cause);
     if (Exit.isFailure(reconcileExit)) return yield* Effect.failCause(reconcileExit.cause);
   });
 
@@ -2754,6 +2817,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       prepared.intent,
       prepared.generation,
       (latest) => applyViewportOverride(tabId, prepared.wc, latest),
+    ).pipe(
+      Effect.tap(() => acceptViewportOverride(prepared.intent)),
+      Effect.onError(() => rollbackViewportOverride(tabId, prepared.intent, prepared.generation)),
     );
   });
 
@@ -2772,6 +2838,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           Effect.asVoid,
         );
       }),
+    ).pipe(
+      Effect.tap(() => acceptViewportOverride(prepared.intent)),
+      Effect.onError(() => rollbackViewportOverride(tabId, prepared.intent, prepared.generation)),
     );
   });
 

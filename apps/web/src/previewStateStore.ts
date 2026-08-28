@@ -48,7 +48,7 @@ export interface ThreadPreviewState {
   serverEpoch: string | null;
   /** Latest ordered server revision applied from a list response or event. */
   serverRevision: number;
-  /** Latest server revision that established each tab's state. */
+  /** Latest server revision that established each live or pending-close tab's state. */
   serverRevisionByTabId: Readonly<Record<string, number>>;
 }
 
@@ -251,10 +251,18 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
               }
             }
           })();
-    const serverRevisionByTabId =
-      event.revision > tabRevision
+    const serverRevisionByTabId = (() => {
+      if (!next.sessions[event.tabId]) {
+        if (current.serverRevisionByTabId[event.tabId] === undefined) {
+          return current.serverRevisionByTabId;
+        }
+        const { [event.tabId]: _removed, ...remaining } = current.serverRevisionByTabId;
+        return remaining;
+      }
+      return event.revision > tabRevision
         ? { ...current.serverRevisionByTabId, [event.tabId]: event.revision }
         : current.serverRevisionByTabId;
+    })();
     return next.serverRevision === event.revision &&
       next.serverEpoch === event.serverEpoch &&
       next.serverRevisionByTabId === serverRevisionByTabId
@@ -317,6 +325,9 @@ export function updatePreviewServerSnapshot(
       }
       const tabRevision = current.serverRevisionByTabId[snapshot.tabId] ?? 0;
       if (stateVersion.revision < tabRevision) return current;
+      if (!current.sessions[snapshot.tabId] && stateVersion.revision <= current.serverRevision) {
+        return current;
+      }
     }
     const {
       stateVersion: _stateVersion,
@@ -406,15 +417,9 @@ export function reconcilePreviewServerSessions(
         snapshots.some((snapshot) => snapshot.tabId === tabId),
       ),
     );
-    const knownTabIds = sameServer
-      ? new Set([
-          ...Object.keys(current.serverRevisionByTabId),
-          ...Object.keys(current.sessions),
-          ...Object.keys(sessions),
-        ])
-      : new Set(Object.keys(sessions));
+    const revisionTabIds = new Set([...Object.keys(sessions), ...suppressedTabIds]);
     const serverRevisionByTabId = Object.fromEntries(
-      [...knownTabIds].map((tabId) => [
+      [...revisionTabIds].map((tabId) => [
         tabId,
         Math.max(sameServer ? (current.serverRevisionByTabId[tabId] ?? 0) : 0, result.revision),
       ]),
