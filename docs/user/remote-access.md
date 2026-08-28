@@ -231,10 +231,12 @@ works for a server that was wiped or is no longer reachable. Device-local connec
 controls remain in **Settings** → **Connections** on web and desktop or **Settings** →
 **Environments** on mobile.
 
-If a linked environment stays offline for several minutes, T3 Connect removes its unused tunnel.
-The environment stays linked to your account and keeps the same address. When the server starts
-again or the computer wakes, T3 Connect creates a replacement tunnel automatically. You do not
-need to pair it again.
+When inactive tunnel cleanup is enabled, T3 Connect removes a linked environment's unused tunnel
+after it stays offline for several minutes. The environment stays linked to your account and keeps
+the same address. When the server starts again or the computer wakes, T3 Connect creates a
+replacement tunnel automatically. You do not need to pair it again. Cleanup usually takes between
+five and ten minutes after the tunnel goes down. It can take longer when many tunnels are waiting
+for cleanup.
 
 ## Security Notes
 

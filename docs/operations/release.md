@@ -83,6 +83,8 @@ Required `production` environment variables:
 Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
+- `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
+  `off`.
 
 Required `production` environment secrets:
 
@@ -101,6 +103,58 @@ Developers deploy personal stages locally rather than through pull-request autom
 ```sh
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
+
+### Managed tunnel cleanup rollout
+
+Keep `RELAY_TUNNEL_CLEANUP_MODE=off` for the first production deploy. That deploy applies the
+nullable allocation-origin migration and adds the registration and recovery endpoints. Web and
+mobile clients do not need a coordinated deploy. Server builds in CLI and desktop releases must
+reach users before cleanup is enabled because those builds register recovery and replace a deleted
+tunnel after wake.
+
+Use this rollout order:
+
+1. Deploy the relay and database migration with cleanup set to `off`.
+2. Release the server build and confirm that current hosts register recovery. Older hosts remain
+   marked as legacy and are not cleanup candidates.
+3. Set cleanup to `dry-run`, deploy the relay, and inspect the cleanup log counters. Check
+   `scanned`, `wouldDelete`, `skippedLegacy`, `failed`, and `truncated` across several sweeps.
+4. Run the disposable-host canary below.
+5. Set cleanup to `enabled` only after the canary recovers without a server restart.
+
+The cleanup job runs every five minutes with a five-minute inactivity grace period. A candidate is
+usually removed between five and ten minutes after it goes down. A backlog takes longer because one
+sweep attempts at most 100 deletions. A full sweep makes at most ten logical list requests and 200
+logical status and delete operations. The Cloudflare SDK can retry each logical operation up to five
+times, so these budgets are not exact network request counts. A two-minute sweep deadline keeps the
+job below its five-minute schedule. A Cloudflare rate limit stops the current deletion loop early.
+
+### Disposable-host canary
+
+This test has not been run against a real Cloudflare account for this change. Run every step against
+a disposable relay stage, test Cloudflare account, disposable host, disposable T3 home, and test
+environment link. Keep production cleanup at `off` or `dry-run` until this canary passes. Do not stop
+a daily-use T3 server or disable the whole machine's network.
+
+1. Deploy the disposable relay stage with cleanup set to `dry-run`. Link the disposable environment
+   and confirm that its tunnel is healthy and recovery is registered.
+2. Capture the PID of that environment's managed `cloudflared` child from its server logs. Confirm
+   that the PID belongs to the disposable T3 process.
+3. Pause only that captured child with `kill -STOP <pid>`. Wait until Cloudflare reports the tunnel
+   as down for more than five minutes.
+4. Confirm that dry-run logs count the tunnel in `wouldDelete` without deleting it.
+5. Set cleanup to `enabled` on the disposable relay stage and deploy it. Confirm through the test
+   Cloudflare account that the old tunnel is deleted. Allow up to ten minutes plus any reported
+   backlog.
+6. Resume only the captured child with `kill -CONT <pid>`. Confirm that the running server detects
+   repeated tunnel authorization rejection, requests recovery, starts a replacement tunnel, and
+   becomes reachable at the same public hostname without a server restart.
+7. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
+
+To roll back, set cleanup to `off` and deploy the relay before downgrading any host. Keep the recovery
+endpoints deployed while current server builds are in use. Downgrading a host that has registered
+recovery while cleanup remains enabled is unsupported because the older host cannot replace a
+deleted tunnel. The nullable database columns can remain in place.
 
 ## Hosted web app release deployment
 
