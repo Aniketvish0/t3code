@@ -444,6 +444,76 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
   });
 
+  it("rejects a resize response superseded by a same-tab server event", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const currentSnapshot = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1200, height: 800 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    };
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: currentSnapshot.updatedAt,
+      serverEpoch,
+      revision: 3,
+      snapshot: currentSnapshot,
+    });
+
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      // Make the stale response look newer by wall time. Its server revision
+      // must still lose to the event delivered by another connection.
+      updatedAt: "2026-01-01T00:00:03.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(currentSnapshot);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
+  });
+
+  it("applies a same-tab server event that follows a resize response", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    updatePreviewServerSnapshot(ref, {
+      ...snapshot,
+      viewport: { _tag: "freeform", width: 900, height: 600 },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+    const currentSnapshot = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1200, height: 800 },
+      updatedAt: "2026-01-01T00:00:03.000Z",
+    };
+
+    applyPreviewServerEventImpl(ref, {
+      type: "resized",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: currentSnapshot.updatedAt,
+      serverEpoch,
+      revision: 3,
+      snapshot: currentSnapshot,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(currentSnapshot);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
+  });
+
   it("does not let one tab's resize response skip earlier events for other tabs", () => {
     const first = makeSnapshot({ tabId: "tab_a" });
     const second = makeSnapshot({ tabId: "tab_b" });

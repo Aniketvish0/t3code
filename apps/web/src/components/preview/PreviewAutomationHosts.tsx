@@ -443,6 +443,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 activeSnapshot,
               );
               if (defaultViewport) {
+                const timeoutError = () =>
+                  new PreviewAutomationViewportTimeoutError({
+                    requestId: request.requestId,
+                    environmentId,
+                    threadId: request.threadId,
+                    tabId: activeTabId,
+                    timeoutMs: request.timeoutMs,
+                  });
                 const resizeResult = await runBrowserViewportMutation(
                   activeRuntimeTabId,
                   async () => {
@@ -461,6 +469,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                       },
                     });
                   },
+                  { deadlineAt: requestDeadlineAt, timeoutError },
                 );
                 if (resizeResult._tag === "Failure") {
                   return raiseAtomCommandFailure(resizeResult);
@@ -616,6 +625,16 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 persistViewport,
                 mutationDeadline,
               );
+              const currentState = assertPreviewRuntimeCurrent(
+                threadRef,
+                ready.tabId,
+                ready.runtimeTabId,
+                request,
+              );
+              // The store contains either this response or a newer same-tab
+              // event. Always send that authoritative value to the guest.
+              const appliedSetting =
+                currentState.sessions[ready.tabId]?.viewport ?? FILL_PREVIEW_VIEWPORT;
               // Native CDP can outlive the server request. Keep it outside the
               // shared server-mutation queue so toolbar resizes can proceed.
               await runBeforeDeadline(
@@ -624,7 +643,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   applyPreviewGuestViewport(
                     ready.bridge.automation.setViewport,
                     ready.runtimeTabId,
-                    setting,
+                    appliedSetting,
                   ),
                 timeoutError,
               );
@@ -632,7 +651,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 threadRef,
                 ready.tabId,
                 ready.runtimeTabId,
-                setting,
+                appliedSetting,
                 deadlineAt,
                 timeoutMs,
                 {
@@ -644,7 +663,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               );
               return {
                 tabId: ready.tabId,
-                setting,
+                setting: appliedSetting,
                 viewport,
               } satisfies PreviewAutomationResizeResult;
             } catch (cause) {

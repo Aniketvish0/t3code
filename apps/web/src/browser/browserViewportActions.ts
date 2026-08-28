@@ -84,23 +84,6 @@ export function runBrowserViewportMutation<A>(
   return queueBrowserViewportMutation(tabId, mutation, deadline).execution;
 }
 
-const runHandlerBeforeDeadline = (
-  tabId: string,
-  operation: Promise<void>,
-  deadlineAt: number,
-): Promise<void> => {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = setTimeout(
-      () => reject(new BrowserViewportCommitTimeoutError(tabId)),
-      Math.max(0, deadlineAt - Date.now()),
-    );
-  });
-  return Promise.race([operation, timeout]).finally(() => {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-  });
-};
-
 export function subscribeBrowserViewportChange(
   tabId: string,
   handler: BrowserViewportHandler,
@@ -116,14 +99,18 @@ export function commitBrowserViewportChange(
   setting: PreviewViewportSetting,
 ): Promise<void> {
   const deadlineAt = Date.now() + BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS;
-  const { execution } = queueBrowserViewportMutation(tabId, () => {
-    if (Date.now() >= deadlineAt) {
-      return Promise.reject(new BrowserViewportCommitTimeoutError(tabId));
-    }
-    const handler = handlers.get(tabId);
-    return handler
-      ? handler(setting)
-      : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
-  });
-  return runHandlerBeforeDeadline(tabId, execution, deadlineAt);
+  const deadline = {
+    deadlineAt,
+    timeoutError: () => new BrowserViewportCommitTimeoutError(tabId),
+  };
+  return queueBrowserViewportMutation(
+    tabId,
+    () => {
+      const handler = handlers.get(tabId);
+      return handler
+        ? handler(setting)
+        : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
+    },
+    deadline,
+  ).execution;
 }
