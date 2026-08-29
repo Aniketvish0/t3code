@@ -126,6 +126,8 @@ import {
 } from "../workspaceBasenameLookup";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useAssetUrlState } from "../assets/assetUrls";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
@@ -225,6 +227,58 @@ interface MarkdownActionFailureContext {
 function reportMarkdownActionFailure(context: MarkdownActionFailureContext, cause: unknown): void {
   console.error("[chat-markdown] action failed", context, cause);
 }
+
+const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME =
+  "h-auto w-auto max-h-[30rem] max-w-[min(100%,30rem)] object-contain";
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
+  CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
+  "my-1 block! rounded-lg border border-border/40",
+);
+
+function ChatMarkdownImageFallback(props: { readonly alt: string }) {
+  return (
+    <span className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+      {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
+    </span>
+  );
+}
+
+const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly path: string;
+  readonly alt: string;
+}) {
+  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadRef.threadId,
+    path: props.path,
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return <ChatMarkdownImageFallback alt={props.alt} />;
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <span
+        role="status"
+        aria-label="Loading image"
+        className="my-1 block aspect-video w-full max-w-[30rem] rounded-lg bg-muted/60"
+      />
+    );
+  }
+  return (
+    <img
+      src={assetUrl.url}
+      alt={props.alt}
+      loading="lazy"
+      draggable={false}
+      className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      onError={() => setFailedUrl(assetUrl.url)}
+    />
+  );
+});
 
 const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
@@ -1562,8 +1616,27 @@ function createChatMarkdownComponents(ctx: ChatMarkdownComponentsContext): Compo
         />
       );
     },
-    img({ node: _node, title: _title, ...props }) {
-      return <img {...props} />;
+    img({ node: _node, title: _title, src, alt, ...props }) {
+      const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
+      const altText = alt ?? "";
+      const imageSource = classifyMarkdownImageSource(srcString, cwd);
+      if (imageSource._tag === "Direct") {
+        return (
+          <img
+            {...props}
+            src={imageSource.uri}
+            alt={altText}
+            loading="lazy"
+            className={cn(props.className, CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME)}
+          />
+        );
+      }
+      if (imageSource._tag === "WorkspaceFile" && threadRef) {
+        return (
+          <ChatMarkdownWorkspaceImage threadRef={threadRef} path={imageSource.path} alt={altText} />
+        );
+      }
+      return <ChatMarkdownImageFallback alt={altText} />;
     },
     a({ node, href, children, title: _title, ...props }) {
       const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
