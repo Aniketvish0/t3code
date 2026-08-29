@@ -2208,6 +2208,10 @@ function ChatViewContent(props: ChatViewProps) {
     : (primaryEnvironment?.serverConfig ?? null);
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
+  const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
+  const supportsAttachmentUploads =
+    attachmentEnvironmentConfig?.environment.capabilities.attachmentUploads === true;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -6933,8 +6937,8 @@ function ChatViewContent(props: ChatViewProps) {
                             compactDisabled={composerCompactDisabled}
                             compactDisabledReason={null}
                             sendDisabledReason={null}
-                            attachmentUploadsCapabilityKnown
-                            supportsAttachmentUploads={false}
+                            attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
+                            supportsAttachmentUploads={supportsAttachmentUploads}
                             externalDrawerAttached={composerBannerItems.length > 0}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
