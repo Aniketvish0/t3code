@@ -160,22 +160,17 @@ uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore
 that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
 send.
 
-## Voice input on iPhone
+## Queued messages
 
-On supported iPhones with iOS 26 or later, tap the microphone in the composer to record a message.
-An expanded composer keeps your draft visible and flips its bottom toolbar into recording controls
-with waves that respond to your voice. A collapsed composer flips into a compact recording strip
-without changing height. Tap the checkmark to finish and transcribe on your device. The waves fade
-into a transcription status, then the usual
-controls return with the text inserted at the selection where recording started. If the keyboard
-is open when you start, it stays open during voice input. You can review and edit the text before
-you send it.
+Messages sent while the agent is working queue above the composer. Rows show a thumbnail of any
+attached image alongside the text, and each row can be reordered, promoted to a steer, or removed.
 
-The first use can download Apple's speech model and needs a network connection. Later transcription
-works offline for that language. A recording can be up to five minutes long. Canceling voice input,
-leaving the screen, or an audio interruption discards the new recording and keeps the existing draft
-and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends
-only the normal message text when you submit the draft.
+The pencil on a queued row opens that message in the composer for editing. The message's
+attachments appear above the text with a remove control, and new images can be added the usual way.
+Sending saves the queued message in place; **Cancel** in the banner leaves it unchanged. Whatever
+you had typed in the composer before starting the edit is restored afterwards. If the queued
+message starts or is removed while you are editing, the edit ends: changed content moves into the
+composer when it is empty, and is discarded otherwise.
 
 ## Commands and skills
 
