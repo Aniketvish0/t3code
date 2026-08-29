@@ -546,8 +546,9 @@ describe("V2 session presentation", () => {
           runId,
           nodeId,
           kind: "proposed_plan",
-          markdown: planItem.markdown,
+          markdown: "",
           status: "completed",
+          detailInTurnItem: true,
         },
       ],
     });
@@ -555,6 +556,7 @@ describe("V2 session presentation", () => {
     expect(entries[0]?.kind).toBe("proposed-plan");
     if (entries[0]?.kind === "proposed-plan") {
       expect(entries[0].proposedPlan.status).toBe("completed");
+      expect(entries[0].proposedPlan.planMarkdown).toBe("Finished plan");
     }
     expect(entries[1]?.kind).toBe("work");
     if (entries[1]?.kind === "work") {
