@@ -24,6 +24,10 @@ interrupted during the update.
 
 The update does not remove saved threads, settings, or project files.
 
+Updates from the previous orchestration system preserve conversation transcripts but cannot carry
+every kind of runtime history forward. Read [Threads from older T3 Code versions](./thread-migration.md)
+before continuing an important older thread.
+
 ## Choose the Action You See
 
 | Action                     | What to do                                                                                                                                                                                                                                                                                                                                                                    |
