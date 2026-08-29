@@ -1,6 +1,37 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { orderedListGutterStyle } from "./ChatMarkdown";
+import {
+  canUseMarkdownFileShellActions,
+  hasMarkdownFilePrimaryAction,
+  orderedListGutterStyle,
+  shouldUseMarkdownFileBrowserPrimaryAction,
+} from "./ChatMarkdown";
+
+describe("markdown file actions", () => {
+  it("only enables shell actions for resolved local execution", () => {
+    expect(canUseMarkdownFileShellActions(null, "local-exec", true)).toBe(false);
+    expect(canUseMarkdownFileShellActions("env-local" as never, "local-exec", true)).toBe(true);
+    expect(canUseMarkdownFileShellActions("env-remote" as never, "remote-links", true)).toBe(false);
+  });
+
+  it("keeps the in-app panel as the ordinary file-chip action", () => {
+    expect(
+      hasMarkdownFilePrimaryAction({
+        canOpenInEditor: false,
+        canOpenInBrowser: false,
+        canOpenInPanel: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseMarkdownFileBrowserPrimaryAction({
+        iconPath: "src/app.ts",
+        canOpenInEditor: true,
+        canOpenInBrowser: true,
+        canOpenInPanel: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("orderedListGutterStyle", () => {
   it("leaves the default gutter alone for single-digit lists", () => {
