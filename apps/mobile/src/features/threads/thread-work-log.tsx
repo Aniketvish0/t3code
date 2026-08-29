@@ -161,7 +161,7 @@ function ThreadActivityThreadRow(props: {
           : "bg-sky-500";
 
   return (
-    <View className="mb-2 min-h-11 flex-row items-center gap-2 rounded-xl border border-continuous border-neutral-950/10 bg-card px-2.5 py-1.5 dark:border-white/10">
+    <View className="mb-2 min-h-11 flex-row items-center gap-2 rounded-xl border border-continuous border-adaptive-neutral-950-a10-white-a10 bg-card px-2.5 py-1.5">
       <View
         accessible
         accessibilityRole="text"
@@ -187,7 +187,7 @@ function ThreadActivityThreadRow(props: {
             threadId: targetThreadId,
           });
         }}
-        className="h-8 shrink-0 flex-row items-center gap-1 rounded-lg bg-neutral-950/5 py-1.5 pl-2.5 pr-1.5 active:bg-neutral-950/10 disabled:opacity-40 dark:bg-white/5 dark:active:bg-white/10"
+        className="h-8 shrink-0 flex-row items-center gap-1 rounded-lg bg-adaptive-neutral-950-a5-white-a5 py-1.5 pl-2.5 pr-1.5 active:bg-adaptive-neutral-950-a10-white-a10 disabled:opacity-40"
       >
         <Text className="font-t3-medium text-sm text-foreground">Open</Text>
         <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
