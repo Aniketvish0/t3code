@@ -212,6 +212,7 @@ function CodexArtifactTemplateCard(props: {
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
+const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
@@ -317,6 +318,34 @@ export function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 1}ch` };
 }
 
+type MarkdownHtmlAstNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownHtmlAstNode[];
+};
+
+function rehypeNormalizeWindowsImageSrc() {
+  return (tree: MarkdownHtmlAstNode) => {
+    const visit = (node: MarkdownHtmlAstNode) => {
+      const src = node.properties?.src;
+      if (
+        node.type === "element" &&
+        node.tagName === "img" &&
+        typeof src === "string" &&
+        WINDOWS_DRIVE_PATH_REGEX.test(src)
+      ) {
+        node.properties = {
+          ...node.properties,
+          src: `file:///${src.replaceAll("\\", "/")}`,
+        };
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
@@ -328,6 +357,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
@@ -337,7 +367,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
   remarkPreserveCodeMeta,
-  remarkTagInlineCode,
+  remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
@@ -347,11 +377,12 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkCodexDirectives,
   remarkBreaks,
   remarkPreserveCodeMeta,
-  remarkTagInlineCode,
+  remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
+  rehypeNormalizeWindowsImageSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -432,6 +463,7 @@ function extractPreCodeMeta(node: unknown): string | undefined {
 type MarkdownAstNode = {
   type?: string;
   meta?: unknown;
+  url?: string;
   data?: {
     hProperties?: Record<string, unknown>;
   };
@@ -464,9 +496,16 @@ function remarkPreserveCodeMeta() {
  * label stays untagged: linkifying it would nest an anchor inside the link's
  * anchor and steal its clicks.
  */
-function remarkTagInlineCode() {
+function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
+      if (
+        (node.type === "link" || node.type === "definition") &&
+        typeof node.url === "string" &&
+        WINDOWS_DRIVE_PATH_REGEX.test(node.url)
+      ) {
+        node.url = `file:///${node.url.replaceAll("\\", "/")}`;
+      }
       if (node.type === "inlineCode" && !insideLink) {
         node.data = {
           ...node.data,
@@ -978,14 +1017,12 @@ function pathParentSegments(path: string): string[] {
 function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<string, string> {
   const groups = new Map<string, Set<string>>();
   for (const filePath of filePaths) {
-    const pathSegments = filePath
-      .replaceAll("\\", "/")
-      .split("/")
-      .filter((segment) => segment.length > 0);
+    const normalizedPath = filePath.replaceAll("\\", "/");
+    const pathSegments = normalizedPath.split("/").filter((segment) => segment.length > 0);
     const basename = pathSegments[pathSegments.length - 1];
     if (!basename) continue;
     const group = groups.get(basename) ?? new Set<string>();
-    group.add(filePath);
+    group.add(normalizedPath);
     groups.set(basename, group);
   }
 
@@ -1046,7 +1083,10 @@ function extractInlineCodeSpans(text: string): string[] {
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+  const rewrittenHref = rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+  return WINDOWS_DRIVE_PATH_REGEX.test(rewrittenHref)
+    ? rewrittenHref.replaceAll("\\", "/")
+    : rewrittenHref;
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1538,7 +1578,9 @@ function createChatMarkdownComponents(ctx: ChatMarkdownComponentsContext): Compo
     copyMarkdown: string,
     className?: string,
   ) => {
-    const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+    const parentSuffix = fileLinkParentSuffixByPath.get(
+      fileLinkMeta.filePath.replaceAll("\\", "/"),
+    );
     const labelParts = [fileLinkMeta.basename];
     if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
       labelParts.push(parentSuffix);
