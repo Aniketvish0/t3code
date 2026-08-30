@@ -367,7 +367,6 @@ describe("deriveMessagesTimelineRows", () => {
       ],
       expandedRunIds: new Set(["turn-1" as never]),
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -421,7 +420,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: null,
       },
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -478,7 +476,6 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map([
         ["assistant-1" as never, assistantTurnDiffSummary],
       ]),
@@ -583,7 +580,6 @@ describe("deriveMessagesTimelineRows", () => {
     const collapsedRows = deriveMessagesTimelineRows({
       timelineEntries,
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -607,7 +603,6 @@ describe("deriveMessagesTimelineRows", () => {
       timelineEntries,
       expandedRunIds: new Set(["turn-1" as never]),
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -616,16 +611,23 @@ describe("deriveMessagesTimelineRows", () => {
       "user-entry",
       "turn-fold:turn-1",
       "assistant-thought-entry",
-      "work-entry-1",
+      "work-toggle:work-entry-1",
       "thread-created-entry",
       "assistant-final-entry",
     ]);
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
-    // The status-less tool entry is neutral (no success/failure signal) and
-    // stays hidden; the info-tone recovery row renders as a plain work row.
-    const expandedWork = expandedRows.find((row) => row.kind === "work");
+    const openedActivity = deriveMessagesTimelineRows({
+      timelineEntries,
+      expandedRunIds: new Set(["turn-1" as never]),
+      expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
+      isWorking: false,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    // Expanding the activity preserves the recovery detail; neutral lifecycle markers stay hidden.
+    const expandedWork = openedActivity.find((row) => row.kind === "work");
     expect(expandedWork?.kind === "work" ? expandedWork.groupedEntries : []).toEqual([
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
@@ -691,7 +693,6 @@ describe("deriveMessagesTimelineRows", () => {
     const collapsedRows = deriveMessagesTimelineRows({
       timelineEntries,
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -819,7 +820,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: null,
       },
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     };
@@ -938,7 +938,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: null,
       },
       isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:14Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -975,7 +974,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: "2026-01-01T00:00:47Z",
       },
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1050,7 +1048,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: "2026-01-01T00:00:03Z",
       },
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1114,7 +1111,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: "2026-01-01T00:00:22Z",
       },
       isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:01:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1123,7 +1119,6 @@ describe("deriveMessagesTimelineRows", () => {
       "turn-fold:turn-1",
       "assistant-final-entry",
       "user-followup-entry",
-      "working-indicator-row",
     ]);
     const finalRow = rows.find((row) => row.id === "assistant-final-entry");
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
@@ -1169,7 +1164,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: null,
       },
       isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1178,7 +1172,6 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.id)).toEqual([
       "assistant-thought-entry",
       "work-live:work-entry-1",
-      "working-indicator-row",
     ]);
     const liveRow = rows.find((row) => row.kind === "work-live");
     expect(liveRow?.kind === "work-live" ? liveRow.entry.id : null).toBe("work-1");
@@ -1218,7 +1211,6 @@ describe("deriveMessagesTimelineRows", () => {
       ],
       expandedRunIds: new Set(["turn-1" as never]),
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1256,7 +1248,6 @@ describe("deriveMessagesTimelineRows", () => {
         completedAt: null,
       },
       isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1305,7 +1296,6 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1368,7 +1358,6 @@ describe("deriveMessagesTimelineRows", () => {
     const baseInput = {
       timelineEntries,
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     };
@@ -1381,7 +1370,6 @@ describe("deriveMessagesTimelineRows", () => {
       groupId: "work-group:work-entry-1",
       hiddenCount: 3,
       expanded: false,
-      onlyToolEntries: true,
       summary: "Ran 2 commands and changed 1 file",
       summaryKind: "mixed",
       hasFailure: false,
@@ -1495,7 +1483,6 @@ describe("computeStableMessagesTimelineRows", () => {
         },
       ],
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1547,7 +1534,6 @@ describe("computeStableMessagesTimelineRows", () => {
         ],
         expandedWorkGroupIds: new Set(["work-group:entry-work-1"]),
         isWorking: false,
-        activeTurnStartedAt: null,
         turnDiffSummaryByAssistantMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
       });
@@ -1603,7 +1589,6 @@ describe("computeStableMessagesTimelineRows", () => {
         },
       ],
       isWorking: false,
-      activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
@@ -1617,68 +1602,5 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
-  });
-});
-
-describe("deriveMessagesTimelineRows waiting-background", () => {
-  it("renders the waiting-background row instead of Working for a parked waiting runtime", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [],
-      isWorking: false,
-      activeTurnStartedAt: null,
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows).toEqual([
-      {
-        kind: "waiting-background",
-        id: "waiting-background-row",
-        createdAt: null,
-        description: "Run Codex review",
-        taskCount: 1,
-        label: "Waiting on background task: Run Codex review",
-      },
-    ]);
-  });
-
-  it("suppresses a stale waiting roster while an active running turn is Working", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [],
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.some((row) => row.kind === "waiting-background")).toBe(false);
-    expect(rows.some((row) => row.kind === "working")).toBe(true);
-  });
-
-  it("includes task count for multiple background tasks", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [],
-      isWorking: false,
-      activeTurnStartedAt: null,
-      pendingBackgroundTasks: [
-        { taskId: "bg-1", description: "first" },
-        { taskId: "bg-2", description: "second" },
-      ],
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows).toEqual([
-      {
-        kind: "waiting-background",
-        id: "waiting-background-row",
-        createdAt: null,
-        description: "first",
-        taskCount: 2,
-        label: "Waiting on 2 background tasks: first, …",
-      },
-    ]);
   });
 });
