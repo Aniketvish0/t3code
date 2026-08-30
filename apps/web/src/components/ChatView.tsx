@@ -188,6 +188,7 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  InfoIcon,
   Minimize2Icon,
   PaperclipIcon,
   WifiOffIcon,
@@ -414,10 +415,7 @@ import {
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ServerUpdateAction } from "./ServerUpdateAction";
-import {
-  ComposerServerUpdateIcon,
-  ComposerServerUpdateStatus,
-} from "./chat/ComposerServerUpdateStatus";
+import { ComposerServerUpdateStatus } from "./chat/ComposerServerUpdateStatus";
 import {
   buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
@@ -2315,7 +2313,7 @@ function ChatViewContent(props: ChatViewProps) {
         variant: updateFailed ? "error" : "default",
         // Prioritize update progress over passive notices, but keep activity attached.
         priority: updateInProgress ? "urgent" : "notice",
-        icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
+        icon: <InfoIcon aria-hidden />,
         title:
           updateInProgress || updateFailed ? (
             <ComposerServerUpdateStatus
@@ -7283,8 +7281,6 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenAgents={addAgentsSurface}
                 key={activeThread.id}
                 isWorking={isWorking}
-                isPreparingWorktree={isPreparingWorktree}
-                activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}
@@ -7429,6 +7425,8 @@ function ChatViewContent(props: ChatViewProps) {
                             activeProposedPlan={activeProposedPlan}
                             activeTasksProgress={activeComposerTasksProgress}
                             activeTaskSteps={activeComposerTaskSteps}
+                            isWorking={isWorking}
+                            activeWorkStartedAt={activeWorkStartedAt}
                             threadSyncPhase={activeEnvironmentUnavailable ? null : threadSyncPhase}
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}

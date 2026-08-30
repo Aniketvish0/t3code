@@ -324,14 +324,10 @@ export type MessagesTimelineRow =
       proposedPlan: ProposedPlan;
     }
   | {
-      kind: "working";
+      kind: "turn-plan";
       id: string;
-      createdAt: string | null;
-    }
-  | {
-      kind: "thinking";
-      id: string;
-      createdAt: string | null;
+      createdAt: string;
+      turnPlan: TurnPlanEntry;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -619,7 +615,6 @@ export function deriveMessagesTimelineRows(input: {
   expandedTurnIds?: ReadonlySet<TurnId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
-  activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -691,18 +686,13 @@ export function deriveMessagesTimelineRows(input: {
   const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
     workEntryIsActiveTurnActivity(entry.entry),
   );
-  const latestToolFailed =
-    latestRunningToolEntry === undefined &&
-    latestVisibleToolEntry !== undefined &&
-    latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&
-    workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry);
   const latestToolKeepsActivityLive =
     latestRunningToolEntry !== undefined ||
     (latestVisibleToolEntry !== undefined &&
       workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry));
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
-    activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
+    activeWorkAnchor && latestVisibleToolEntry
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
           return {
@@ -719,17 +709,6 @@ export function deriveMessagesTimelineRows(input: {
           };
         })()
       : null;
-  const activeWorkEntryIds = new Set(
-    activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
-  );
-  const appendWorkingRow = () => {
-    nextRows.push({
-      kind: "working",
-      id: "working-indicator-row",
-      createdAt: input.activeTurnStartedAt,
-    });
-  };
-  let hasActivityRow = false;
   const appendActiveWorkRows = () => {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
@@ -748,10 +727,6 @@ export function deriveMessagesTimelineRows(input: {
     const timelineEntry = input.timelineEntries[index];
     if (!timelineEntry) {
       continue;
-    }
-
-    if (input.isWorking && index === activeTurnHeaderIndex) {
-      appendWorkingRow();
     }
 
     if (timelineEntry.id === activeWorkPlacementEntryId) {
@@ -914,17 +889,6 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
-    appendWorkingRow();
-  }
-  if (input.isWorking && (!hasActivityRow || latestToolFailed)) {
-    nextRows.push({
-      kind: "thinking",
-      id: LIVE_ACTIVITY_ROW_ID,
-      createdAt: input.activeTurnStartedAt,
-    });
-  }
-
   return nextRows;
 }
 
@@ -953,10 +917,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
-    case "working":
-    case "thinking":
-      return a.createdAt === (b as typeof a).createdAt;
-
     case "turn-fold": {
       const bf = b as typeof a;
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
