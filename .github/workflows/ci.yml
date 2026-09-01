@@ -149,6 +149,8 @@ jobs:
           run-install: |
             args:
               - --filter=t3...
+              # ActivityPayloadProjection.test.ts imports mobile code and needs Expo's tsconfig.
+              - --filter=@t3tools/mobile...
 
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
