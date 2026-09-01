@@ -39,6 +39,7 @@ import {
 } from "../lib/diffRendering";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadProjection, useThreadShell } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
@@ -115,10 +116,6 @@ export default function DiffPanel({
   }));
   const [codeViewRevision, setCodeViewRevision] = useState(0);
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
-  const lastCompletedTurnRefreshRef = useRef<{
-    readonly threadKey: string | null;
-    readonly runId: RunId | null;
-  } | null>(null);
 
   const routeThreadRef = useParams({
     strict: false,
@@ -293,23 +290,12 @@ export default function DiffPanel({
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [canRefreshGitDiff, refreshBranchDiffPreview]);
 
-  useEffect(() => {
-    const current = {
-      threadKey: activeThreadRefreshKey,
-      runId: latestTurn?.runId ?? null,
-    };
-    const previous = lastCompletedTurnRefreshRef.current;
-    if (!canRefreshGitDiff) {
-      return;
-    }
-    if (previous === null || previous.threadKey !== current.threadKey) {
-      lastCompletedTurnRefreshRef.current = current;
-      return;
-    }
-    if (previous.runId === current.runId) return;
-    refreshBranchDiffPreview();
-    lastCompletedTurnRefreshRef.current = current;
-  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.runId, refreshBranchDiffPreview]);
+  useWorkspaceMutationRefresh({
+    enabled: canRefreshGitDiff,
+    mutationId: workspaceMutationId,
+    refresh: refreshBranchDiffPreview,
+    resourceKey: `diff:${activeThreadRefreshKey ?? ""}`,
+  });
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),

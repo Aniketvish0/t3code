@@ -119,6 +119,23 @@ uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore
 that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
 send.
 
+## Voice input on iPhone
+
+On supported iPhones with iOS 26 or later, tap the microphone in the composer to record a message.
+An expanded composer keeps your draft visible and flips its bottom toolbar into recording controls
+with waves that respond to your voice. A collapsed composer flips into a compact recording strip
+without changing height. Tap the checkmark to finish and transcribe on your device. The waves fade
+into a transcription status, then the usual
+controls return with the text inserted at the selection where recording started. If the keyboard
+is open when you start, it stays open during voice input. You can review and edit the text before
+you send it.
+
+The first use can download Apple's speech model and needs a network connection. Later transcription
+works offline for that language. A recording can be up to five minutes long. Canceling voice input,
+leaving the screen, or an audio interruption discards the new recording and keeps the existing draft
+and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends
+only the normal message text when you submit the draft.
+
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is
