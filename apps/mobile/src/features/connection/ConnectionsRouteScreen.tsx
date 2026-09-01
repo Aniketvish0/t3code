@@ -49,8 +49,13 @@ export function ConnectionsRouteScreen() {
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
-  const pendingRemovalRef = useRef(false);
-  const [removingEnvironmentId, setRemovingEnvironmentId] = useState<EnvironmentId | null>(null);
+  const pendingRemovalRef = useRef(new Map<string, EnvironmentId>());
+  const [pendingRemovalByAccount, setPendingRemovalByAccount] = useState<
+    ReadonlyMap<string, EnvironmentId>
+  >(() => new Map());
+  const removingEnvironmentId = accountEnvironments.accountId
+    ? (pendingRemovalByAccount.get(accountEnvironments.accountId) ?? null)
+    : null;
 
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
@@ -59,15 +64,26 @@ export function ConnectionsRouteScreen() {
   const removeFromT3Connect = useCallback(
     async (environment: RelayClientEnvironmentRecord) => {
       const accountId = accountEnvironments.accountId;
-      if (!accountId || pendingRemovalRef.current) return;
-      pendingRemovalRef.current = true;
-      setRemovingEnvironmentId(environment.environmentId);
+      if (!accountId || pendingRemovalRef.current.has(accountId)) return;
+      pendingRemovalRef.current.set(accountId, environment.environmentId);
+      setPendingRemovalByAccount((current) => {
+        const next = new Map(current);
+        next.set(accountId, environment.environmentId);
+        return next;
+      });
       const result = await removeAccountEnvironment({
         accountId,
         environmentId: environment.environmentId,
       });
-      pendingRemovalRef.current = false;
-      setRemovingEnvironmentId(null);
+      if (pendingRemovalRef.current.get(accountId) === environment.environmentId) {
+        pendingRemovalRef.current.delete(accountId);
+      }
+      setPendingRemovalByAccount((current) => {
+        if (current.get(accountId) !== environment.environmentId) return current;
+        const next = new Map(current);
+        next.delete(accountId);
+        return next;
+      });
 
       if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
       if (result._tag === "Success") {

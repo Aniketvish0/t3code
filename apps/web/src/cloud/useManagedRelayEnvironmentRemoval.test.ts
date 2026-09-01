@@ -147,4 +147,45 @@ describe("managed relay environment removal", () => {
     expect(testState.refreshDiscovery).not.toHaveBeenCalled();
     expect(testState.toast).not.toHaveBeenCalled();
   });
+
+  it("tracks held removals independently for each account", async () => {
+    type RemovalSuccess = {
+      readonly _tag: "Success";
+      readonly value: { readonly cleanupPending: false };
+    };
+    const accountAResult = createDeferred<RemovalSuccess>();
+    const accountBResult = createDeferred<RemovalSuccess>();
+    const accountBEnvironment = {
+      ...environment,
+      environmentId: "environment-2" as EnvironmentId,
+      label: "Laptop",
+    };
+    testState.removeEnvironmentCommand.mockImplementation((input: { readonly accountId: string }) =>
+      input.accountId === "account-1" ? accountAResult.promise : accountBResult.promise,
+    );
+
+    const accountARemoval = renderRemovalHook().removeEnvironment(environment);
+    expect(renderRemovalHook().pendingEnvironmentId).toBe(environment.environmentId);
+
+    testState.environmentsState.accountId = "account-2";
+    setSession("account-2");
+    const accountBRemoval = renderRemovalHook().removeEnvironment(accountBEnvironment);
+
+    expect(testState.removeEnvironmentCommand).toHaveBeenCalledTimes(2);
+    expect(renderRemovalHook().pendingEnvironmentId).toBe(accountBEnvironment.environmentId);
+
+    testState.environmentsState.accountId = "account-1";
+    setSession("account-1");
+    expect(renderRemovalHook().pendingEnvironmentId).toBe(environment.environmentId);
+
+    testState.environmentsState.accountId = "account-2";
+    setSession("account-2");
+    accountAResult.resolve({ _tag: "Success", value: { cleanupPending: false } });
+    await accountARemoval;
+    expect(renderRemovalHook().pendingEnvironmentId).toBe(accountBEnvironment.environmentId);
+
+    accountBResult.resolve({ _tag: "Success", value: { cleanupPending: false } });
+    await accountBRemoval;
+    expect(renderRemovalHook().pendingEnvironmentId).toBeNull();
+  });
 });

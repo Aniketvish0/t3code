@@ -25,27 +25,43 @@ export function useManagedRelayEnvironmentRemoval() {
   const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
-  const pendingRef = useRef(false);
+  const pendingRef = useRef(new Map<string, EnvironmentId>());
   const [confirmingEnvironmentId, setConfirmingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const [pendingEnvironmentId, setPendingEnvironmentId] = useState<EnvironmentId | null>(null);
+  const [pendingByAccount, setPendingByAccount] = useState<ReadonlyMap<string, EnvironmentId>>(
+    () => new Map(),
+  );
+  const pendingEnvironmentId = environmentsState.accountId
+    ? (pendingByAccount.get(environmentsState.accountId) ?? null)
+    : null;
   useEffect(() => {
     setConfirmingEnvironmentId(null);
   }, [environmentsState.accountId]);
 
   const removeEnvironment = async (environment: RelayClientEnvironmentRecord) => {
     const accountId = environmentsState.accountId;
-    if (!accountId || pendingRef.current) return;
+    if (!accountId || pendingRef.current.has(accountId)) return;
 
-    pendingRef.current = true;
-    setPendingEnvironmentId(environment.environmentId);
+    pendingRef.current.set(accountId, environment.environmentId);
+    setPendingByAccount((current) => {
+      const next = new Map(current);
+      next.set(accountId, environment.environmentId);
+      return next;
+    });
     const result = await removeEnvironmentCommand({
       accountId,
       environmentId: environment.environmentId,
     });
-    pendingRef.current = false;
-    setPendingEnvironmentId(null);
+    if (pendingRef.current.get(accountId) === environment.environmentId) {
+      pendingRef.current.delete(accountId);
+    }
+    setPendingByAccount((current) => {
+      if (current.get(accountId) !== environment.environmentId) return current;
+      const next = new Map(current);
+      next.delete(accountId);
+      return next;
+    });
 
     if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
     if (result._tag === "Success") {

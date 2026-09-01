@@ -11,19 +11,15 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
 
 describe("ManagedEndpointAllocations", () => {
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
-    let claimedAt: string | undefined;
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          set: (values: { readonly updatedAt: string }) => {
-            claimedAt = values.updatedAt;
-            return {
-              where: () => ({
-                returning: () => Effect.succeed([{ userId: "user-1" }]),
-              }),
-            };
-          },
+          set: () => ({
+            where: () => ({
+              returning: () => Effect.succeed([{ updatedAt: "2026-09-01T00:00:00.001Z" }]),
+            }),
+          }),
         };
       },
     } as unknown as RelayDb.RelayDb["Service"];
@@ -36,8 +32,7 @@ describe("ManagedEndpointAllocations", () => {
         updatedAt: "captured-generation",
       });
 
-      expect(generation).toBe(claimedAt);
-      expect(generation).not.toBeNull();
+      expect(generation).toBe("2026-09-01T00:00:00.001Z");
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 
@@ -103,22 +98,12 @@ describe("ManagedEndpointAllocations", () => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
           values: () => ({
-            onConflictDoNothing: () => ({
+            onConflictDoUpdate: () => ({
               returning: () => Effect.succeed([]),
             }),
           }),
         };
       },
-      select: () => ({
-        from: (table: unknown) => {
-          expect(table).toBe(relayManagedEndpointAllocations);
-          return {
-            where: () => ({
-              limit: () => Effect.succeed([]),
-            }),
-          };
-        },
-      }),
     } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {

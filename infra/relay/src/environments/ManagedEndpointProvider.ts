@@ -719,11 +719,12 @@ export const make = Effect.gen(function* () {
         });
       }
       const tunnel = { id: tunnelResponse.id, name: tunnelResponse.name };
-      yield* allocations
+      const tunnelAllocation = yield* allocations
         .recordTunnel({
           userId: input.userId,
           environmentId: input.environmentId,
           tunnelId: tunnel.id,
+          updatedAt: allocation.updatedAt,
         })
         .pipe(
           Effect.mapError(
@@ -739,6 +740,16 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (tunnelAllocation === null) {
+        return yield* new ManagedEndpointProvisioningFailed({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          stage: "record-tunnel",
+          hostname,
+          tunnelName,
+          tunnelId: tunnel.id,
+        });
+      }
 
       yield* tunnels
         .putConfiguration(tunnel.id, {
@@ -773,7 +784,11 @@ export const make = Effect.gen(function* () {
         proxied: true,
       } as const;
 
-      const dnsRecordId = yield* ensureDnsRecord(hostname, allocation.dnsRecordId, dnsRecord).pipe(
+      const dnsRecordId = yield* ensureDnsRecord(
+        hostname,
+        tunnelAllocation.dnsRecordId,
+        dnsRecord,
+      ).pipe(
         Effect.mapError(
           (cause) =>
             new ManagedEndpointProvisioningFailed({
@@ -783,16 +798,19 @@ export const make = Effect.gen(function* () {
               hostname,
               tunnelName,
               tunnelId: tunnel.id,
-              ...(allocation.dnsRecordId === null ? {} : { dnsRecordId: allocation.dnsRecordId }),
+              ...(tunnelAllocation.dnsRecordId === null
+                ? {}
+                : { dnsRecordId: tunnelAllocation.dnsRecordId }),
               cause,
             }),
         ),
       );
-      yield* allocations
+      const dnsAllocation = yield* allocations
         .recordDns({
           userId: input.userId,
           environmentId: input.environmentId,
           dnsRecordId,
+          updatedAt: tunnelAllocation.updatedAt,
         })
         .pipe(
           Effect.mapError(
@@ -809,6 +827,17 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (dnsAllocation === null) {
+        return yield* new ManagedEndpointProvisioningFailed({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          stage: "record-dns",
+          hostname,
+          tunnelName,
+          tunnelId: tunnel.id,
+          dnsRecordId,
+        });
+      }
 
       const connectorToken = yield* tunnels.getToken(tunnel.id).pipe(
         Effect.mapError(
@@ -829,6 +858,7 @@ export const make = Effect.gen(function* () {
         .markReady({
           userId: input.userId,
           environmentId: input.environmentId,
+          updatedAt: dnsAllocation.updatedAt,
         })
         .pipe(
           Effect.mapError(
