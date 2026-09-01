@@ -359,7 +359,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
 }): Effect.Effect<
-  void,
+  string,
   CloudEnvironmentLinkError,
   EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
 > {
@@ -446,5 +446,6 @@ export function linkPrimaryEnvironmentToCloud(input: {
         },
       })
       .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));
+    return link.cloudUserId;
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
 }

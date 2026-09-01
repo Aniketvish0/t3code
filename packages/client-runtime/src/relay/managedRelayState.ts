@@ -267,6 +267,20 @@ function statusKey(input: {
   return JSON.stringify(input);
 }
 
+function environmentsKey(input: { readonly accountId: string; readonly generation: number }) {
+  return JSON.stringify(input);
+}
+
+function parseEnvironmentsKey(key: string): {
+  readonly accountId: string;
+  readonly generation: number;
+} {
+  return JSON.parse(key) as {
+    readonly accountId: string;
+    readonly generation: number;
+  };
+}
+
 function parseStatusKey(key: string): {
   readonly accountId: string;
   readonly environment: RelayClientEnvironmentRecord;
@@ -374,8 +388,16 @@ export function createManagedRelayQueryManager(
       );
     });
 
-  const environmentsAtom = Atom.family((accountId: string) =>
-    runtime
+  const environmentsGenerationAtom = Atom.family((accountId: string) =>
+    Atom.make(0).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`managed-relay:environments-generation:${accountId}`),
+    ),
+  );
+
+  const environmentsQueryAtom = Atom.family((key: string) => {
+    const { accountId } = parseEnvironmentsKey(key);
+    return runtime
       .atom((get) =>
         Effect.gen(function* () {
           const base = { operation: "environments" as const, accountId };
@@ -393,8 +415,15 @@ export function createManagedRelayQueryManager(
       .pipe(
         Atom.swr({ staleTime, revalidateOnMount: true }),
         Atom.setIdleTTL(idleTtl),
-        Atom.withLabel(`managed-relay:environments:${accountId}`),
-      ),
+        Atom.withLabel(`managed-relay:environments-query:${key}`),
+      );
+  });
+
+  const environmentsAtom = Atom.family((accountId: string) =>
+    Atom.make((get) => {
+      const generation = get(environmentsGenerationAtom(accountId));
+      return get(environmentsQueryAtom(environmentsKey({ accountId, generation })));
+    }).pipe(Atom.setIdleTTL(idleTtl), Atom.withLabel(`managed-relay:environments:${accountId}`)),
   );
 
   const devicesAtom = Atom.family((accountId: string) =>
@@ -464,7 +493,11 @@ export function createManagedRelayQueryManager(
       readonly environment: RelayClientEnvironmentRecord;
     }) => environmentStatusAtom(statusKey(input)),
     refreshEnvironments(registry: AtomRegistry.AtomRegistry, accountId: string): void {
-      registry.refresh(environmentsAtom(accountId));
+      const generation = registry.get(environmentsGenerationAtom(accountId));
+      registry.refresh(environmentsQueryAtom(environmentsKey({ accountId, generation })));
+    },
+    discardEnvironments(registry: AtomRegistry.AtomRegistry, accountId: string): void {
+      registry.update(environmentsGenerationAtom(accountId), (generation) => generation + 1);
     },
     refreshDevices(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(devicesAtom(accountId));

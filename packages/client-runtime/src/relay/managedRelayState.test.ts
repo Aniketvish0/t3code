@@ -6,6 +6,7 @@ import {
   type RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -375,6 +376,86 @@ describe("createManagedRelayQueryManager", () => {
     manager.refreshEnvironments(registry, "account-1");
     await vi.waitFor(() => expect(listEnvironments).toHaveBeenCalledTimes(2));
   });
+
+  it.effect("discards pre-link membership evidence without losing a later confirmed absence", () =>
+    Effect.gen(function* () {
+      const postLinkRefresh = yield* Deferred.make<
+        ReadonlyArray<RelayClientEnvironmentRecord>,
+        ManagedRelay.ManagedRelayClientError
+      >();
+      const refreshFailure = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "list relay-managed environments",
+        cause: new Error("refresh failed"),
+      });
+      let requestCount = 0;
+      const listEnvironments = vi.fn(() => {
+        requestCount += 1;
+        if (requestCount === 1) return Effect.succeed([]);
+        if (requestCount === 2) return Deferred.await(postLinkRefresh);
+        if (requestCount === 3) return Effect.succeed([environment]);
+        if (requestCount === 4) return Effect.succeed([]);
+        return Effect.fail(refreshFailure);
+      });
+      const manager = createManager({ listEnvironments });
+      setSession();
+      const atom = manager.environmentsAtom("account-1");
+      const unmount = registry.mount(atom);
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual([]);
+        }),
+      );
+
+      manager.discardEnvironments(registry, "account-1");
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(listEnvironments).toHaveBeenCalledTimes(2);
+          expect(readManagedRelaySnapshotState(registry.get(atom))).toMatchObject({
+            data: null,
+            isPending: true,
+          });
+        }),
+      );
+
+      yield* Deferred.fail(postLinkRefresh, refreshFailure);
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(readManagedRelaySnapshotState(registry.get(atom))).toMatchObject({
+            data: null,
+            error: "Could not list relay-managed environments.",
+            isPending: false,
+          });
+        }),
+      );
+
+      manager.refreshEnvironments(registry, "account-1");
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual([environment]);
+        }),
+      );
+
+      manager.refreshEnvironments(registry, "account-1");
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual([]);
+        }),
+      );
+
+      manager.refreshEnvironments(registry, "account-1");
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(readManagedRelaySnapshotState(registry.get(atom))).toMatchObject({
+            data: [],
+            error: "Could not list relay-managed environments.",
+            isPending: false,
+          });
+        }),
+      );
+      unmount();
+    }),
+  );
 
   it("loads device snapshots through the current account session", async () => {
     const listDevices = vi.fn(() => Effect.succeed([device]));

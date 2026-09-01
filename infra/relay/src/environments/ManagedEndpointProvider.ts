@@ -76,6 +76,8 @@ export class ManagedEndpointProvisioningFailed extends Schema.TaggedErrorClass<M
 
 const ManagedEndpointDeprovisioningStage = Schema.Literals([
   "load-allocation",
+  "discover-dns-records",
+  "discover-tunnel",
   "claim-release",
   "claim-deprovision",
   "delete-dns-record",
@@ -469,6 +471,36 @@ export const make = Effect.gen(function* () {
       if (allocation === null) {
         return;
       }
+      const tunnelId =
+        allocation.tunnelId ??
+        (yield* tunnels.list({ name: allocation.tunnelName, isDeleted: false }).pipe(
+          Effect.map((response) =>
+            response.result.find((tunnel) => tunnel.name === allocation.tunnelName),
+          ),
+          Effect.map((tunnel) => tunnel?.id ?? null),
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointDeprovisioningFailed({
+                ...input,
+                stage: "discover-tunnel",
+                cause,
+              }),
+          ),
+        ));
+      const dnsRecordIds =
+        allocation.dnsRecordId === null
+          ? yield* dns.listRecords(allocation.hostname).pipe(
+              Effect.map((records) => records.map((record) => record.id)),
+              Effect.mapError(
+                (cause) =>
+                  new ManagedEndpointDeprovisioningFailed({
+                    ...input,
+                    stage: "discover-dns-records",
+                    cause,
+                  }),
+              ),
+            )
+          : [allocation.dnsRecordId];
       const claimedAt = yield* allocations
         .claimDeprovision({
           userId: input.userId,
@@ -481,8 +513,8 @@ export const make = Effect.gen(function* () {
               new ManagedEndpointDeprovisioningFailed({
                 ...input,
                 stage: "claim-deprovision",
-                ...(allocation.tunnelId === null ? {} : { tunnelId: allocation.tunnelId }),
-                ...(allocation.dnsRecordId === null ? {} : { dnsRecordId: allocation.dnsRecordId }),
+                ...(tunnelId === null ? {} : { tunnelId }),
+                ...(dnsRecordIds[0] === undefined ? {} : { dnsRecordId: dnsRecordIds[0] }),
                 cause,
               }),
           ),
@@ -490,21 +522,22 @@ export const make = Effect.gen(function* () {
       if (claimedAt === null) {
         return;
       }
-      const dnsRecordId = allocation.dnsRecordId;
-      if (dnsRecordId !== null) {
-        yield* ignoreNotFound(dns.deleteRecord(dnsRecordId)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointDeprovisioningFailed({
-                ...input,
-                stage: "delete-dns-record",
-                dnsRecordId,
-                cause,
-              }),
+      yield* Effect.forEach(
+        dnsRecordIds,
+        (dnsRecordId) =>
+          ignoreNotFound(dns.deleteRecord(dnsRecordId)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ManagedEndpointDeprovisioningFailed({
+                  ...input,
+                  stage: "delete-dns-record",
+                  dnsRecordId,
+                  cause,
+                }),
+            ),
           ),
-        );
-      }
-      const tunnelId = allocation.tunnelId;
+        { discard: true },
+      );
       if (tunnelId !== null) {
         yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
           Effect.mapError(
@@ -530,8 +563,8 @@ export const make = Effect.gen(function* () {
               new ManagedEndpointDeprovisioningFailed({
                 ...input,
                 stage: "remove-allocation",
-                ...(allocation.tunnelId === null ? {} : { tunnelId: allocation.tunnelId }),
-                ...(allocation.dnsRecordId === null ? {} : { dnsRecordId: allocation.dnsRecordId }),
+                ...(tunnelId === null ? {} : { tunnelId }),
+                ...(dnsRecordIds[0] === undefined ? {} : { dnsRecordId: dnsRecordIds[0] }),
                 cause,
               }),
           ),

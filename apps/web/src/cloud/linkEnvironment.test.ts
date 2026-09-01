@@ -322,13 +322,14 @@ describe("web cloud link environment client", () => {
         );
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withServices(
+      const accountId = yield* withServices(
         linkPrimaryEnvironmentToCloud({
           target: TARGET,
           clerkToken: "clerk-token",
         }),
       );
 
+      expect(accountId).toBe("user-1");
       expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
       expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
         "http://127.0.0.1:3000/api/connect/link-proof",
