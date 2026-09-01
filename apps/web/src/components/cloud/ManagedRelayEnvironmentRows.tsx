@@ -32,6 +32,7 @@ function ManagedRelayEnvironmentRowsSkeleton() {
   return (
     <div className={ITEM_ROW_CLASSNAME} role="status" aria-label="Loading account environments">
       <div className={ITEM_ROW_INNER_CLASSNAME}>
+        {/* Keep these placeholders static to avoid continuous GPU work during relay requests. */}
         <div className="min-w-0 flex-1 space-y-2">
           <Skeleton className="h-4 w-32 rounded-full after:hidden" />
           <Skeleton className="h-3 w-20 rounded-full after:hidden" />

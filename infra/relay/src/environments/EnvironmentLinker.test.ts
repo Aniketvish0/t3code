@@ -6,7 +6,9 @@ import type {
 import { RELAY_LINK_PROOF_TYP } from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
@@ -47,6 +49,16 @@ const config = RelayConfiguration.RelayConfiguration.of({
   managedEndpointNamespace: undefined,
 });
 const isEnvironmentLinkProofInvalid = Schema.is(EnvironmentLinker.EnvironmentLinkProofInvalid);
+const managedDeprovisionTarget = {
+  userId: "user_123",
+  environmentId: "env-link-test",
+  hostname: "managed.example.test",
+  tunnelId: "managed-tunnel-id",
+  tunnelName: "managed-tunnel",
+  dnsRecordId: "managed-dns-record-id",
+  readyAt: "2026-09-01T00:00:00.000Z",
+  updatedAt: "managed-allocation-generation",
+} satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
 
 function signTestJwt(payload: object, typ: string, privateKey: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "EdDSA", typ })).toString("base64url");
@@ -152,6 +164,7 @@ function testLayer(input?: {
                   providerKind: "cloudflare_tunnel",
                 },
                 runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
+                deprovisionTarget: managedDeprovisionTarget,
               })),
         }),
       ),
@@ -163,7 +176,8 @@ describe("EnvironmentLinker", () => {
   it.effect("rejects an implicit resume of a revoked link before provisioning", () => {
     let provisioned = false;
     return Effect.gen(function* () {
-      const { request } = yield* makeRequest;
+      const { request: publishOnlyRequest } = yield* makeRequest;
+      const request = { ...publishOnlyRequest, managedTunnelsEnabled: true };
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
       const error = yield* Effect.flip(linker.link({ userId: "user_123", request }));
 
@@ -186,12 +200,80 @@ describe("EnvironmentLinker", () => {
                   providerKind: "cloudflare_tunnel" as const,
                   connectorToken: "connector-token",
                 },
+                deprovisionTarget: managedDeprovisionTarget,
               };
             }),
         }),
       ),
     );
   });
+
+  it.effect("cleans up a managed allocation when unlink revokes an in-flight resume", () =>
+    Effect.gen(function* () {
+      const provisionStarted = yield* Deferred.make<void>();
+      const unlinkCommitted = yield* Deferred.make<void>();
+      let cleanupTarget: ManagedEndpointProvider.ManagedEndpointDeprovisionTarget | null = null;
+      let revoked = false;
+      const cleanupFailure = new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+        stage: "delete-tunnel",
+        userId: "user_123",
+        environmentId: "env-link-test",
+        tunnelId: "managed-tunnel-id",
+        cause: "Cloudflare unavailable",
+      });
+
+      yield* Effect.gen(function* () {
+        const { request: publishOnlyRequest } = yield* makeRequest;
+        const request = { ...publishOnlyRequest, managedTunnelsEnabled: true };
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const linkFiber = yield* Effect.forkChild(linker.link({ userId: "user_123", request }));
+
+        yield* Deferred.await(provisionStarted);
+        revoked = true;
+        yield* Deferred.succeed(unlinkCommitted, undefined);
+
+        const error = yield* Fiber.join(linkFiber).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(EnvironmentLinks.EnvironmentLinkRevoked);
+        expect(cleanupTarget).toBe(managedDeprovisionTarget);
+      }).pipe(
+        Effect.provide(
+          testLayer({
+            isRevokedForUser: () => Effect.succeed(false),
+            upsert: () =>
+              revoked
+                ? Effect.fail(
+                    new EnvironmentLinks.EnvironmentLinkRevoked({
+                      userId: "user_123",
+                      environmentId: "env-link-test",
+                    }),
+                  )
+                : Effect.void,
+            provision: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(provisionStarted, undefined);
+                yield* Deferred.await(unlinkCommitted);
+                return {
+                  endpoint: {
+                    httpBaseUrl: "https://managed.example.test/",
+                    wsBaseUrl: "wss://managed.example.test/ws",
+                    providerKind: "cloudflare_tunnel" as const,
+                  },
+                  runtime: {
+                    providerKind: "cloudflare_tunnel" as const,
+                    connectorToken: "connector-token",
+                  },
+                  deprovisionTarget: managedDeprovisionTarget,
+                };
+              }),
+            deprovision: (input) =>
+              Effect.sync(() => {
+                cleanupTarget = input.target ?? null;
+              }).pipe(Effect.andThen(Effect.fail(cleanupFailure))),
+          }),
+        ),
+      );
+    }),
+  );
 
   it.effect("uses verified JWT claims when linking an environment", () => {
     let persistedEnvironmentId: string | null = null;

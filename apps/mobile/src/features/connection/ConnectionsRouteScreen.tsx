@@ -195,19 +195,24 @@ export function ConnectionsRouteScreen() {
                     <Text className="text-sm font-t3-bold text-primary">Try again</Text>
                   </Pressable>
                 </View>
-              ) : accountEnvironments.data === null ? (
-                <Text className="px-4 py-4 text-sm text-foreground-muted">Loading...</Text>
+              ) : null}
+              {accountEnvironments.data === null ? (
+                accountEnvironments.error ? null : (
+                  <Text className="px-4 py-4 text-sm text-foreground-muted">Loading...</Text>
+                )
               ) : accountEnvironments.data.length === 0 ? (
-                <Text className="px-4 py-4 text-sm text-foreground-muted">
-                  No environments are registered to this account.
-                </Text>
+                accountEnvironments.error ? null : (
+                  <Text className="px-4 py-4 text-sm text-foreground-muted">
+                    No environments are registered to this account.
+                  </Text>
+                )
               ) : (
                 accountEnvironments.data.map((environment, index) => (
                   <View
                     key={environment.environmentId}
                     className={cn(
                       "flex-row items-center gap-3 px-4 py-3.5",
-                      index !== 0 && "border-t border-border",
+                      (accountEnvironments.error || index !== 0) && "border-t border-border",
                     )}
                   >
                     <View className="min-w-0 flex-1 gap-0.5">

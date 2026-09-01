@@ -21,6 +21,7 @@ import {
   type RelayClientEnvironmentRecord,
   type RelayEnvironmentStatusResponse as RelayEnvironmentStatusResponseType,
   type RelayManagedEndpointProviderKind,
+  RelayEnvironmentLinkRevokedError,
 } from "@t3tools/contracts/relay";
 import { exchangeRemoteDpopAccessToken } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
@@ -78,6 +79,8 @@ const isEnvironmentCloudApiError = Schema.is(
   ]),
 );
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
+const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
+const isRelayEnvironmentLinkRevokedError = Schema.is(RelayEnvironmentLinkRevokedError);
 
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
@@ -139,6 +142,15 @@ function decodedRelayClientError(message: string) {
       ...(traceId ? { traceId } : {}),
     });
   };
+}
+
+export function isCloudEnvironmentLinkRevokedError(error: CloudEnvironmentLinkError): boolean {
+  const cause = error.cause;
+  return (
+    isManagedRelayRequestFailedError(cause) &&
+    cause.relayError !== undefined &&
+    isRelayEnvironmentLinkRevokedError(cause.relayError)
+  );
 }
 
 function findEnvironmentCloudApiError(cause: unknown): { readonly message: string } | null {

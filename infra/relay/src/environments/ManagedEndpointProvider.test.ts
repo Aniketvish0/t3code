@@ -213,6 +213,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
           ...allocation,
           readyAt: "2026-06-02T00:00:00.000Z",
         }));
+        return allocations.get(allocationKey(input)) ?? null;
       }),
     claimRelease: (input) =>
       Effect.sync(() => {
@@ -370,6 +371,16 @@ describe("ManagedEndpointProvider", () => {
           connectorToken: "connector-token",
           tunnelId: "tunnel-id",
           tunnelName: expectedManagedTunnelName("env_ABC"),
+        },
+        deprovisionTarget: {
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          hostname,
+          tunnelId: "tunnel-id",
+          tunnelName: expectedManagedTunnelName("env_ABC"),
+          dnsRecordId: "created-record-id",
+          readyAt: "2026-06-02T00:00:00.000Z",
+          updatedAt: "generation-4",
         },
       });
       expect(dnsCalls).toEqual([
@@ -820,21 +831,16 @@ describe("ManagedEndpointProvider", () => {
         ...key,
         origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
       } as const;
-      yield* provider.provision(request);
-      const unlinkTarget = yield* provider.prepareDeprovision(key);
-      expect(unlinkTarget).not.toBeNull();
-      if (unlinkTarget === null) {
-        return;
-      }
+      const rejectedResume = yield* provider.provision(request);
 
-      // A relink refreshes the allocation generation after unlink captured its
-      // target but before unlink begins external teardown.
+      // A relink refreshes the allocation generation after the rejected resume
+      // provisioned but before its cleanup begins external teardown.
       yield* provider.provision(request);
       const tunnelCallCount = tunnelCalls.length;
       const dnsCallCount = dnsCalls.length;
       const allocationCallCount = allocationCalls.length;
 
-      yield* provider.deprovision({ ...key, target: unlinkTarget });
+      yield* provider.deprovision({ ...key, target: rejectedResume.deprovisionTarget });
 
       expect(tunnelCalls).toHaveLength(tunnelCallCount);
       expect(dnsCalls).toHaveLength(dnsCallCount);

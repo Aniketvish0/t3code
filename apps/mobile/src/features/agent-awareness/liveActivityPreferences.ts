@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { linkEnvironmentToCloudWithPreference } from "../cloud/linkEnvironment";
+import {
+  isCloudEnvironmentLinkRevokedError,
+  linkEnvironmentToCloudWithPreference,
+} from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
 export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEnabled")(
@@ -31,7 +34,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
             connection,
             intent: "resume",
             liveActivitiesEnabled: enabled,
-          }),
+          }).pipe(Effect.catchIf(isCloudEnvironmentLinkRevokedError, () => Effect.void)),
         { concurrency: "unbounded" },
       );
     });
@@ -57,6 +60,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
             intent: "resume",
             liveActivitiesEnabled: input.previousEnabled,
           }).pipe(
+            Effect.catchIf(isCloudEnvironmentLinkRevokedError, () => Effect.void),
             Effect.catchCause((cause) =>
               Effect.logWarning(
                 `Could not restore Live Activity preference for environment ${connection.environmentId}.`,

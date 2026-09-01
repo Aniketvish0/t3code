@@ -342,7 +342,29 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint });
+      yield* links.upsert({ ...input, proof: verified, endpoint }).pipe(
+        Effect.catchTags({
+          EnvironmentLinkRevoked: (error) =>
+            provisioned === null
+              ? Effect.fail(error)
+              : managedEndpointProvider
+                  .deprovision({
+                    userId: input.userId,
+                    environmentId: verified.environmentId,
+                    target: provisioned.deprovisionTarget,
+                  })
+                  .pipe(
+                    Effect.tapError((cleanupError) =>
+                      Effect.logWarning("managed endpoint cleanup after rejected resume failed", {
+                        environmentId: verified.environmentId,
+                        errorTag: cleanupError._tag,
+                      }),
+                    ),
+                    Effect.ignore,
+                    Effect.andThen(Effect.fail(error)),
+                  ),
+        }),
+      );
       const environmentCredential = yield* credentials.create({
         environmentId: verified.environmentId,
         environmentPublicKey: verified.environmentPublicKey,

@@ -122,6 +122,8 @@ export type ManagedEndpointProviderError =
 export interface ManagedEndpointProvisioningResult {
   readonly endpoint: RelayManagedEndpoint;
   readonly runtime: RelayManagedEndpointRuntimeConfig;
+  /** The allocation generation created by this provision, for guarded cleanup if linking fails. */
+  readonly deprovisionTarget: ManagedEndpointDeprovisionTarget;
 }
 
 export type ManagedEndpointDeprovisionTarget = ManagedEndpointAllocations.ManagedEndpointAllocation;
@@ -823,7 +825,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      yield* allocations
+      const deprovisionTarget = yield* allocations
         .markReady({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -843,6 +845,17 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (deprovisionTarget === null) {
+        return yield* new ManagedEndpointProvisioningFailed({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          stage: "mark-allocation-ready",
+          hostname,
+          tunnelName,
+          tunnelId: tunnel.id,
+          dnsRecordId,
+        });
+      }
 
       return {
         endpoint: managedEndpointForHostname(hostname),
@@ -852,6 +865,7 @@ export const make = Effect.gen(function* () {
           tunnelId: tunnel.id,
           tunnelName: tunnel.name,
         },
+        deprovisionTarget,
       } satisfies ManagedEndpointProvisioningResult;
     }),
   });
