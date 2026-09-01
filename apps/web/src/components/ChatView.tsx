@@ -2645,6 +2645,9 @@ function ChatViewContent(props: ChatViewProps) {
     activeRuntime,
     localDispatchStartedAt,
   );
+  // Server-side workspace preparation: unlike the local-dispatch flag this
+  // survives reloads and shows on remote viewers of the same thread.
+  const activeRunPreparing = activeActivityRun?.status === "preparing";
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -7391,6 +7394,8 @@ function ChatViewContent(props: ChatViewProps) {
                 key={activeThread.id}
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestRunSettled}
+                activeTurnStartedAt={activeWorkStartedAt}
+                isPreparingWorktree={isPreparingWorktree || activeRunPreparing}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestRun={activeActivityRun}
