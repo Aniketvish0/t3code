@@ -638,6 +638,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledOverride: null,
             settledAt: null,
             unsettledAt: null,
+            viewedAt: event.payload.createdAt,
             snoozedUntil: null,
             snoozedAt: null,
             pinnedAt: null,
@@ -831,6 +832,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: event.payload.linkedPullRequest }
               : {}),
+            ...(event.payload.viewedAt !== undefined ? { viewedAt: event.payload.viewedAt } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
