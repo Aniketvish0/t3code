@@ -23,7 +23,6 @@ export interface PromotedRoute {
 
 const ENDPOINTS_REQUEST_TIMEOUT_MS = 10_000;
 const CANDIDATE_PROBE_TIMEOUT_MS = 3_000;
-const MAX_PROBED_CANDIDATES = 5;
 /** After a promoted route fails, stay on the relay and do not re-promote that
  * endpoint until the cooldown expires. Keeps a flaky LAN from ping-ponging the
  * connection between routes. */
@@ -62,19 +61,23 @@ export function selectPromotionCandidates(input: {
   readonly cooldownEndpointIds?: ReadonlySet<string>;
 }): readonly AdvertisedEndpoint[] {
   const currentBaseUrl = normalizedBaseUrl(input.currentHttpBaseUrl);
-  return input.endpoints
-    .filter((endpoint) => {
-      if (endpoint.status === "unavailable") return false;
-      if (endpoint.reachability !== "lan" && endpoint.reachability !== "private-network") {
-        return false;
-      }
-      if (input.cooldownEndpointIds?.has(endpoint.id)) return false;
-      return normalizedBaseUrl(endpoint.httpBaseUrl) !== currentBaseUrl;
-    })
-    .sort(
-      (left, right) => reachabilityRank[left.reachability] - reachabilityRank[right.reachability],
-    )
-    .slice(0, MAX_PROBED_CANDIDATES);
+  return (
+    input.endpoints
+      .filter((endpoint) => {
+        if (endpoint.status === "unavailable") return false;
+        if (endpoint.reachability !== "lan" && endpoint.reachability !== "private-network") {
+          return false;
+        }
+        if (input.cooldownEndpointIds?.has(endpoint.id)) return false;
+        return normalizedBaseUrl(endpoint.httpBaseUrl) !== currentBaseUrl;
+      })
+      // Every candidate is probed concurrently with a short timeout, so there is
+      // no cap: a machine with Docker or VM bridge interfaces ahead of its
+      // physical LAN must still get its real LAN address probed.
+      .sort(
+        (left, right) => reachabilityRank[left.reachability] - reachabilityRank[right.reachability],
+      )
+  );
 }
 
 /** Failure time per endpoint id. Keyed per endpoint (not per environment) so
