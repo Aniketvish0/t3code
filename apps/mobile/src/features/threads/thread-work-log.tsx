@@ -12,7 +12,11 @@ import { AppText as Text } from "../../components/AppText";
 import { T3_CODE_BRAND_MARK_SOURCE } from "../../components/brandAssets";
 import { cn } from "../../lib/cn";
 import { threadFeedActivityIsVisible, type ThreadFeedActivity } from "../../lib/threadActivity";
-import type { ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  type ToolGroupSummaryKind,
+  workEntryViewedImagePath,
+} from "@t3tools/client-runtime/work-log/presentation";
+import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -80,7 +84,7 @@ function ShimmerWorkContent(props: {
   );
 }
 
-function ShimmeringWorkContent(props: {
+export function ShimmeringWorkContent(props: {
   readonly icon: AppSymbolName;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
@@ -385,6 +389,7 @@ export function ThreadWorkLog(props: {
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
   readonly workspaceRoot?: string | null;
+  readonly renderImage?: MarkdownImageRenderer;
 }) {
   const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
     ...activity,
@@ -427,6 +432,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         {rows.map((row) => {
           const expanded = props.expandedRows[row.id] ?? false;
           const canExpand = row.canExpand;
+          const viewedImagePath = workEntryViewedImagePath(row.workEntry);
           const displayText = row.detail ?? row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
           const failed = row.status === "failure";
@@ -533,6 +539,11 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
                   layout={WORK_LOG_LAYOUT_TRANSITION}
                   className="ml-7 overflow-hidden border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
                 >
+                  {viewedImagePath && props.renderImage ? (
+                    <View className="pb-1.5">
+                      {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+                    </View>
+                  ) : null}
                   <ThreadActivityInspector
                     activity={row}
                     currentThreadId={props.currentThreadId}
