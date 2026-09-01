@@ -61,8 +61,8 @@ import {
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
 import {
-  previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  previewAutomationOpenViewport,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 import {
@@ -413,14 +413,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const reusedExistingTab = activeTabId !== null;
             tabId = activeTabId;
             if (!activeTabId) {
+              const configuredViewport = browserDefaultOpenViewport(await resolveBrowserDefaults());
               const result = await open({
                 environmentId,
                 input: {
                   threadId: request.threadId,
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
-                  // An agent that didn't state a size gets the user's
-                  // configured default, same as a hand-opened tab.
-                  viewport: browserDefaultOpenViewport(await resolveBrowserDefaults()),
+                  viewport: previewAutomationOpenViewport(configuredViewport),
                 },
               });
               if (result._tag === "Failure") {
@@ -437,47 +436,6 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               readThreadPreviewState(threadRef).serverEpoch,
               activeTabId,
             );
-            if (activeSnapshot) {
-              const defaultViewport = previewAutomationDefaultViewport(
-                reusedExistingTab,
-                activeSnapshot,
-              );
-              if (defaultViewport) {
-                const timeoutError = () =>
-                  new PreviewAutomationViewportTimeoutError({
-                    requestId: request.requestId,
-                    environmentId,
-                    threadId: request.threadId,
-                    tabId: activeTabId,
-                    timeoutMs: request.timeoutMs,
-                  });
-                const resizeResult = await runBrowserViewportMutation(
-                  activeRuntimeTabId,
-                  async () => {
-                    assertPreviewRuntimeCurrent(
-                      threadRef,
-                      activeTabId,
-                      activeRuntimeTabId,
-                      request,
-                    );
-                    return await resize({
-                      environmentId,
-                      input: {
-                        threadId: request.threadId,
-                        tabId: activeTabId,
-                        viewport: defaultViewport,
-                      },
-                    });
-                  },
-                  { deadlineAt: requestDeadlineAt, timeoutError },
-                );
-                if (resizeResult._tag === "Failure") {
-                  return raiseAtomCommandFailure(resizeResult);
-                }
-                activeSnapshot = resizeResult.value;
-                updatePreviewServerSnapshot(threadRef, resizeResult.value);
-              }
-            }
             const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
               input,
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
