@@ -187,8 +187,9 @@ describe("ConnectionPromotion cooldowns", () => {
       const third = yield* promotion.discover(RELAY_PREPARED);
       expect(Option.map(third, (route) => route.endpointId)).toEqual(Option.some(LAN_ENDPOINT.id));
     }).pipe(
-      Effect.provide(promotionHarnessLayer([LAN_ENDPOINT, TAILNET_ENDPOINT])),
-      Effect.provide(TestClock.layer()),
+      Effect.provide(
+        Layer.merge(promotionHarnessLayer([LAN_ENDPOINT, TAILNET_ENDPOINT]), TestClock.layer()),
+      ),
     ),
   );
 });
