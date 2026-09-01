@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1954,6 +1956,344 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const session = sessions.find((candidate) => candidate.threadId === threadId);
       NodeAssert.equal(session?.status, "ready");
       NodeAssert.equal(session?.activeTurnId, undefined);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("sums unique OpenCode step usage for the parent turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-step-usage");
+      const busy = promiseWithResolvers<unknown>();
+      const firstStep = promiseWithResolvers<unknown>();
+      const duplicateStep = promiseWithResolvers<unknown>();
+      const secondStep = promiseWithResolvers<unknown>();
+      const childSession = promiseWithResolvers<unknown>();
+      const idle = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        busy.promise,
+        firstStep.promise,
+        duplicateStep.promise,
+        secondStep.promise,
+        childSession.promise,
+        idle.promise,
+      ];
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const sendFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Use two model steps",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "opencode/kimi-k3",
+          ),
+        })
+        .pipe(Effect.forkChild);
+      busy.resolve({
+        id: "evt-step-usage-busy",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "busy" },
+        },
+      });
+      yield* Fiber.join(sendFiber);
+
+      const stepPart = {
+        id: "step-usage-1",
+        sessionID: "http://127.0.0.1:9999/session",
+        messageID: "assistant-step-usage-1",
+        type: "step-finish",
+        reason: "tool-calls",
+        cost: 0,
+        tokens: {
+          input: 100,
+          output: 20,
+          reasoning: 5,
+          cache: { read: 40, write: 10 },
+        },
+      } as const;
+      firstStep.resolve({
+        id: "evt-step-usage-1",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: stepPart,
+        },
+      });
+      duplicateStep.resolve({
+        id: "evt-step-usage-1-duplicate",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: stepPart,
+        },
+      });
+      secondStep.resolve({
+        id: "evt-step-usage-2",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: {
+            ...stepPart,
+            id: "step-usage-2",
+            messageID: "assistant-step-usage-2",
+            tokens: {
+              input: 50,
+              output: 10,
+              reasoning: 2,
+              cache: { read: 10, write: 0 },
+            },
+          },
+        },
+      });
+      childSession.resolve({
+        id: "evt-step-usage-child",
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-step-usage",
+            parentID: "http://127.0.0.1:9999/session",
+          },
+        },
+      });
+      idle.resolve({
+        id: "evt-step-usage-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const completed = yield* Fiber.join(completedFiber).pipe(Effect.timeout("1 second"));
+      NodeAssert.equal(completed._tag, "Some");
+      if (completed._tag === "Some" && completed.value.type === "turn.completed") {
+        NodeAssert.deepStrictEqual(completed.value.payload.tokenUsage, {
+          usageStatus: "complete",
+          usageScope: "main_agent",
+          inputTokens: 210,
+          cachedInputTokens: 50,
+          cacheCreationTokens: 10,
+          outputTokens: 37,
+          reasoningTokens: 7,
+          hasSubagents: true,
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps the next turn usage while the prior completion is delayed", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-token-usage-terminal-handoff");
+      const firstBusy = promiseWithResolvers<unknown>();
+      const firstStep = promiseWithResolvers<unknown>();
+      const firstIdle = promiseWithResolvers<unknown>();
+      const secondBusy = promiseWithResolvers<unknown>();
+      const secondStep = promiseWithResolvers<unknown>();
+      const secondIdle = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        firstBusy.promise,
+        firstStep.promise,
+        firstIdle.promise,
+        secondBusy.promise,
+        secondStep.promise,
+        secondIdle.promise,
+      ];
+
+      const firstStepWriteStarted = yield* Deferred.make<void>();
+      const firstStepWriteRelease = yield* Deferred.make<void>();
+      const terminalUuidStarted = yield* Deferred.make<void>();
+      const terminalUuidRelease = yield* Deferred.make<void>();
+      let blockFirstStepWrite = true;
+      let blockNextUuid = false;
+      const nodeCrypto = yield* Crypto.Crypto;
+      const gatedCrypto = {
+        ...nodeCrypto,
+        randomUUIDv4: Effect.suspend(() => {
+          if (!blockNextUuid) return nodeCrypto.randomUUIDv4;
+          blockNextUuid = false;
+          return Deferred.succeed(terminalUuidStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(terminalUuidRelease)),
+            Effect.andThen(nodeCrypto.randomUUIDv4),
+          );
+        }),
+      } satisfies Crypto.Crypto;
+      const adapter = yield* makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        nativeEventLogger: {
+          filePath: "memory://opencode-token-usage-terminal-handoff",
+          write: (record) => {
+            const eventType = (record as { event?: { type?: unknown } }).event?.type;
+            if (blockFirstStepWrite && eventType === "message.part.updated") {
+              blockFirstStepWrite = false;
+              return Deferred.succeed(firstStepWriteStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(firstStepWriteRelease)),
+              );
+            }
+            return Effect.void;
+          },
+          close: () => Effect.void,
+        },
+      }).pipe(Effect.provideService(Crypto.Crypto, gatedCrypto));
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const firstSend = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Run the first token handoff turn",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "opencode/kimi-k3",
+          ),
+        })
+        .pipe(Effect.forkChild);
+      firstBusy.resolve({
+        id: "evt-token-handoff-first-busy",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "busy" },
+        },
+      });
+      const firstTurn = yield* Fiber.join(firstSend);
+      firstStep.resolve({
+        id: "evt-token-handoff-first-step",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: {
+            id: "step-token-handoff-first",
+            sessionID: "http://127.0.0.1:9999/session",
+            messageID: "assistant-token-handoff-first",
+            type: "step-finish",
+            reason: "stop",
+            cost: 0,
+            tokens: {
+              input: 100,
+              output: 20,
+              reasoning: 5,
+              cache: { read: 40, write: 10 },
+            },
+          },
+        },
+      });
+      yield* Deferred.await(firstStepWriteStarted);
+      blockNextUuid = true;
+      firstIdle.resolve({
+        id: "evt-token-handoff-first-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+      yield* Deferred.succeed(firstStepWriteRelease, undefined);
+      yield* Deferred.await(terminalUuidStarted);
+
+      runtimeMock.state.sessionStatus = "busy";
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "Run the second token handoff turn",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      NodeAssert.notEqual(secondTurn.turnId, firstTurn.turnId);
+      yield* Deferred.succeed(terminalUuidRelease, undefined);
+
+      secondBusy.resolve({
+        id: "evt-token-handoff-second-busy",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "busy" },
+        },
+      });
+      secondStep.resolve({
+        id: "evt-token-handoff-second-step",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: {
+            id: "step-token-handoff-second",
+            sessionID: "http://127.0.0.1:9999/session",
+            messageID: "assistant-token-handoff-second",
+            type: "step-finish",
+            reason: "stop",
+            cost: 0,
+            tokens: {
+              input: 90,
+              output: 13,
+              reasoning: 3,
+              cache: { read: 20, write: 5 },
+            },
+          },
+        },
+      });
+      secondIdle.resolve({
+        id: "evt-token-handoff-second-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const completed = Array.from(
+        yield* Fiber.join(completedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.deepStrictEqual(
+        completed.map((event) =>
+          event.type === "turn.completed" ? event.payload.tokenUsage : undefined,
+        ),
+        [
+          {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            inputTokens: 150,
+            cachedInputTokens: 40,
+            cacheCreationTokens: 10,
+            outputTokens: 25,
+            reasoningTokens: 5,
+            hasSubagents: false,
+          },
+          {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            inputTokens: 115,
+            cachedInputTokens: 20,
+            cacheCreationTokens: 5,
+            outputTokens: 16,
+            reasoningTokens: 3,
+            hasSubagents: false,
+          },
+        ],
+      );
 
       yield* adapter.stopSession(threadId);
     }),

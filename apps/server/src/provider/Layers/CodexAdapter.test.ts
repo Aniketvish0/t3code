@@ -556,7 +556,250 @@ function startLifecycleRuntime() {
   });
 }
 
+function codexTokenUsageEvent(input: {
+  readonly id: string;
+  readonly turnId: string;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+}): ProviderEvent {
+  const totalTokens = input.inputTokens + input.outputTokens;
+  return {
+    id: asEventId(input.id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId(input.turnId),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    method: "thread/tokenUsage/updated",
+    payload: {
+      threadId: "thread-1",
+      turnId: input.turnId,
+      tokenUsage: {
+        total: {
+          inputTokens: input.inputTokens,
+          cachedInputTokens: input.cachedInputTokens,
+          cacheWriteInputTokens: input.cacheCreationTokens,
+          outputTokens: input.outputTokens,
+          reasoningOutputTokens: input.reasoningTokens,
+          totalTokens,
+        },
+        last: {
+          inputTokens: input.inputTokens,
+          cachedInputTokens: input.cachedInputTokens,
+          cacheWriteInputTokens: input.cacheCreationTokens,
+          outputTokens: input.outputTokens,
+          reasoningOutputTokens: input.reasoningTokens,
+          totalTokens,
+        },
+      },
+    },
+  };
+}
+
+function codexTurnEvent(method: "turn/started" | "turn/completed", turnId: string): ProviderEvent {
+  return {
+    id: asEventId(`evt-${method}-${turnId}`),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId(turnId),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    method,
+    payload:
+      method === "turn/started"
+        ? {}
+        : {
+            threadId: "thread-1",
+            turn: { id: turnId, items: [], status: "completed" },
+          },
+  };
+}
+
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("calculates one Codex turn total from cumulative counters", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-usage"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-usage-1",
+          turnId: "turn-usage",
+          inputTokens: 100,
+          cachedInputTokens: 40,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 8,
+        }),
+      );
+      // Codex can repeat both notifications without new work.
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-usage"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-usage-duplicate",
+          turnId: "turn-usage",
+          inputTokens: 100,
+          cachedInputTokens: 40,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 8,
+        }),
+      );
+      yield* runtime.emit({
+        id: asEventId("evt-collab-activity"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-usage"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/activity",
+        payload: {
+          agentThreadId: "child-1",
+          agentPath: "/root/child-1",
+          activityKind: "started",
+        },
+      });
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-usage-2",
+          turnId: "turn-usage",
+          inputTokens: 150,
+          cachedInputTokens: 60,
+          cacheCreationTokens: 15,
+          outputTokens: 30,
+          reasoningTokens: 12,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-usage"));
+
+      const completed = yield* Fiber.join(completedFiber);
+      NodeAssert.equal(completed._tag, "Some");
+      if (completed._tag === "Some" && completed.value.type === "turn.completed") {
+        NodeAssert.deepStrictEqual(completed.value.payload.tokenUsage, {
+          usageStatus: "complete",
+          usageScope: "main_agent",
+          inputTokens: 150,
+          cachedInputTokens: 60,
+          cacheCreationTokens: 15,
+          outputTokens: 30,
+          reasoningTokens: 12,
+          hasSubagents: true,
+        });
+      }
+    }),
+  );
+
+  it.effect("does not count old Codex history after resume or rollback", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        resumeCursor: { threadId: "provider-thread-1" },
+        runtimeMode: "full-access",
+      });
+      const runtime = lifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const firstCompletionsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-resumed"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-resume-baseline",
+          turnId: "turn-resumed",
+          inputTokens: 1_000,
+          cachedInputTokens: 400,
+          cacheCreationTokens: 100,
+          outputTokens: 200,
+          reasoningTokens: 80,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-resumed"));
+
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-after-resume"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-after-resume",
+          turnId: "turn-after-resume",
+          inputTokens: 1_100,
+          cachedInputTokens: 440,
+          cacheCreationTokens: 110,
+          outputTokens: 220,
+          reasoningTokens: 88,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-after-resume"));
+
+      const firstCompletions = Array.from(yield* Fiber.join(firstCompletionsFiber));
+
+      yield* adapter.rollbackThread(asThreadId("thread-1"), 1);
+      const rollbackCompletionFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-after-rollback"));
+      yield* runtime.emit(
+        codexTokenUsageEvent({
+          id: "evt-after-rollback",
+          turnId: "turn-after-rollback",
+          inputTokens: 1_050,
+          cachedInputTokens: 420,
+          cacheCreationTokens: 105,
+          outputTokens: 210,
+          reasoningTokens: 84,
+        }),
+      );
+      yield* runtime.emit(codexTurnEvent("turn/completed", "turn-after-rollback"));
+
+      const rollbackCompletion = yield* Fiber.join(rollbackCompletionFiber);
+      const completions = [
+        ...firstCompletions,
+        ...(rollbackCompletion._tag === "Some" ? [rollbackCompletion.value] : []),
+      ];
+      NodeAssert.deepStrictEqual(
+        completions.map((event) =>
+          event.type === "turn.completed" ? event.payload.tokenUsage : undefined,
+        ),
+        [
+          {
+            usageStatus: "unavailable",
+            usageScope: "main_agent",
+            hasSubagents: false,
+          },
+          {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            inputTokens: 100,
+            cachedInputTokens: 40,
+            cacheCreationTokens: 10,
+            outputTokens: 20,
+            reasoningTokens: 8,
+            hasSubagents: false,
+          },
+          {
+            usageStatus: "unavailable",
+            usageScope: "main_agent",
+            hasSubagents: false,
+          },
+        ],
+      );
+    }),
+  );
+
   it.effect("carries child model metadata through every task event", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

@@ -22,6 +22,7 @@ import {
   RuntimeRequestId,
   RuntimeTaskId,
   type RuntimeTaskUsage,
+  type TurnTokenUsage,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
@@ -93,7 +94,33 @@ interface CodexAdapterSessionContext {
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
+  readonly turnTokenUsage: CodexTurnTokenUsageState;
   stopped: boolean;
+}
+
+type CodexCumulativeTokenUsage = {
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheCreationTokens?: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+};
+
+interface CodexTurnTokenUsageAccumulator {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number | undefined;
+  outputTokens: number;
+  reasoningTokens: number;
+  observed: boolean;
+  complete: boolean;
+  hasSubagents: boolean;
+}
+
+interface CodexTurnTokenUsageState {
+  baseline: CodexCumulativeTokenUsage | undefined;
+  activeTurnId: string | undefined;
+  readonly byTurnId: Map<string, CodexTurnTokenUsageAccumulator>;
 }
 
 function mapCodexRuntimeError(
@@ -190,6 +217,155 @@ function normalizeCodexTokenUsage(
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
     compactsAutomatically: true,
+  };
+}
+
+function codexCumulativeTokenUsage(
+  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
+): CodexCumulativeTokenUsage {
+  return {
+    inputTokens: usage.total.inputTokens,
+    cachedInputTokens: usage.total.cachedInputTokens,
+    ...(usage.total.cacheWriteInputTokens !== undefined
+      ? { cacheCreationTokens: usage.total.cacheWriteInputTokens }
+      : {}),
+    outputTokens: usage.total.outputTokens,
+    reasoningTokens: usage.total.reasoningOutputTokens,
+  };
+}
+
+function makeCodexTurnTokenUsageState(isResume: boolean): CodexTurnTokenUsageState {
+  return {
+    baseline: isResume
+      ? undefined
+      : {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        },
+    activeTurnId: undefined,
+    byTurnId: new Map(),
+  };
+}
+
+function getCodexTurnAccumulator(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+): CodexTurnTokenUsageAccumulator {
+  const existing = state.byTurnId.get(turnId);
+  if (existing) return existing;
+  const created: CodexTurnTokenUsageAccumulator = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    observed: false,
+    complete: state.baseline !== undefined,
+    hasSubagents: false,
+  };
+  state.byTurnId.set(turnId, created);
+  return created;
+}
+
+function accumulateCodexTurnTokenUsage(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
+): void {
+  const current = codexCumulativeTokenUsage(usage);
+  const previous = state.baseline;
+  if (state.activeTurnId !== turnId) {
+    if (
+      state.activeTurnId === undefined &&
+      previous !== undefined &&
+      (current.inputTokens < previous.inputTokens ||
+        current.cachedInputTokens < previous.cachedInputTokens ||
+        current.outputTokens < previous.outputTokens ||
+        current.reasoningTokens < previous.reasoningTokens)
+    ) {
+      state.baseline = undefined;
+    } else if (state.activeTurnId === undefined) {
+      state.baseline = current;
+    }
+    return;
+  }
+
+  const accumulator = getCodexTurnAccumulator(state, turnId);
+  state.baseline = current;
+
+  if (!previous) {
+    accumulator.complete = false;
+    return;
+  }
+
+  const requiredCounters = [
+    ["inputTokens", current.inputTokens, previous.inputTokens],
+    ["cachedInputTokens", current.cachedInputTokens, previous.cachedInputTokens],
+    ["outputTokens", current.outputTokens, previous.outputTokens],
+    ["reasoningTokens", current.reasoningTokens, previous.reasoningTokens],
+  ] as const;
+  if (requiredCounters.some(([, next, prior]) => next < prior)) {
+    accumulator.complete = false;
+    return;
+  }
+
+  if (requiredCounters.some(([, next, prior]) => next > prior)) {
+    accumulator.observed = true;
+  }
+  for (const [field, next, prior] of requiredCounters) {
+    accumulator[field] += next - prior;
+  }
+
+  if (current.cacheCreationTokens !== undefined && previous.cacheCreationTokens !== undefined) {
+    if (current.cacheCreationTokens < previous.cacheCreationTokens) {
+      accumulator.complete = false;
+      accumulator.cacheCreationTokens = undefined;
+    } else if (accumulator.cacheCreationTokens !== undefined) {
+      accumulator.cacheCreationTokens += current.cacheCreationTokens - previous.cacheCreationTokens;
+    }
+  } else {
+    accumulator.cacheCreationTokens = undefined;
+  }
+}
+
+function completeCodexTurnTokenUsage(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+  completed: boolean,
+): TurnTokenUsage {
+  const usage = state.byTurnId.get(turnId);
+  state.byTurnId.delete(turnId);
+  if (state.activeTurnId === turnId) state.activeTurnId = undefined;
+  if (!usage) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents: false,
+    };
+  }
+
+  if (!usage.observed) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents: usage.hasSubagents,
+    };
+  }
+
+  return {
+    usageStatus: usage.complete && completed ? "complete" : "partial",
+    usageScope: "main_agent",
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    ...(usage.cacheCreationTokens !== undefined
+      ? { cacheCreationTokens: usage.cacheCreationTokens }
+      : {}),
+    outputTokens: usage.outputTokens,
+    reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),
+    hasSubagents: usage.hasSubagents,
   };
 }
 
@@ -1715,6 +1891,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             : {}),
         };
+        const turnTokenUsage = makeCodexTurnTokenUsageState(
+          isCodexResumeCursorSchema(input.resumeCursor),
+        );
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
@@ -1743,7 +1922,64 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (event.method === "turn/started" && event.turnId) {
+              if (turnTokenUsage.activeTurnId !== event.turnId) {
+                turnTokenUsage.byTurnId.clear();
+                turnTokenUsage.activeTurnId = event.turnId;
+                getCodexTurnAccumulator(turnTokenUsage, event.turnId);
+              }
+            } else if (event.method === "thread/tokenUsage/updated") {
+              const payload = readPayload(
+                EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
+                event.payload,
+              );
+              if (payload) {
+                accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
+              }
+            } else if (turnTokenUsage.activeTurnId) {
+              const collabPayload =
+                typeof event.payload === "object" && event.payload !== null
+                  ? (event.payload as Record<string, unknown>)
+                  : undefined;
+              const isCollabSpawn =
+                event.method === "collabAgent/started" ||
+                (event.method === "collabAgent/activity" &&
+                  collabPayload?.activityKind === "started");
+              if (isCollabSpawn && event.turnId === turnTokenUsage.activeTurnId) {
+                getCodexTurnAccumulator(turnTokenUsage, turnTokenUsage.activeTurnId).hasSubagents =
+                  true;
+              }
+            }
+
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+              if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
+                return {
+                  ...runtimeEvent,
+                  payload: {
+                    ...runtimeEvent.payload,
+                    tokenUsage: completeCodexTurnTokenUsage(
+                      turnTokenUsage,
+                      String(runtimeEvent.turnId),
+                      runtimeEvent.payload.state === "completed",
+                    ),
+                  },
+                } satisfies ProviderRuntimeEvent;
+              }
+              if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
+                return {
+                  ...runtimeEvent,
+                  payload: {
+                    ...runtimeEvent.payload,
+                    tokenUsage: completeCodexTurnTokenUsage(
+                      turnTokenUsage,
+                      String(runtimeEvent.turnId),
+                      false,
+                    ),
+                  },
+                } satisfies ProviderRuntimeEvent;
+              }
+              return runtimeEvent;
+            });
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1781,6 +2017,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           scope: sessionScope,
           runtime,
           eventFiber,
+          turnTokenUsage,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -1905,7 +2142,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }
 
     return requireSession(threadId).pipe(
-      Effect.flatMap((session) => session.runtime.rollbackThread(numTurns)),
+      Effect.flatMap((session) =>
+        session.runtime.rollbackThread(numTurns).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              session.turnTokenUsage.baseline = undefined;
+              session.turnTokenUsage.activeTurnId = undefined;
+              session.turnTokenUsage.byTurnId.clear();
+            }),
+          ),
+        ),
+      ),
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause

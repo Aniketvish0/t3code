@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   type ToolLifecycleItemType,
+  type TurnTokenUsage,
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
@@ -337,6 +338,7 @@ interface OpenCodeSessionContext {
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
+  turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
@@ -365,6 +367,68 @@ interface OpenCodeSessionContext {
    *   - tears down the OpenCode server process for scope-owned servers.
    */
   readonly sessionScope: Scope.Closeable;
+}
+
+interface OpenCodeTurnTokenUsageAccumulator {
+  readonly partIds: Set<string>;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  complete: boolean;
+  hasSubagents: boolean;
+}
+
+function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumulator {
+  return {
+    partIds: new Set(),
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    complete: true,
+    hasSubagents: false,
+  };
+}
+
+function accumulateOpenCodeStepUsage(
+  accumulator: OpenCodeTurnTokenUsageAccumulator,
+  part: Extract<Part, { readonly type: "step-finish" }>,
+): void {
+  if (accumulator.partIds.has(part.id)) return;
+  accumulator.partIds.add(part.id);
+  accumulator.inputTokens += part.tokens.input + part.tokens.cache.read + part.tokens.cache.write;
+  accumulator.cachedInputTokens += part.tokens.cache.read;
+  accumulator.cacheCreationTokens += part.tokens.cache.write;
+  accumulator.outputTokens += part.tokens.output + part.tokens.reasoning;
+  accumulator.reasoningTokens += part.tokens.reasoning;
+}
+
+function takeOpenCodeTurnTokenUsage(
+  context: OpenCodeSessionContext,
+  complete: boolean,
+): TurnTokenUsage {
+  const usage = context.turnTokenUsage;
+  context.turnTokenUsage = undefined;
+  if (!usage || usage.partIds.size === 0) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents: usage?.hasSubagents ?? false,
+    };
+  }
+  return {
+    usageStatus: complete && usage.complete ? "complete" : "partial",
+    usageScope: "main_agent",
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    cacheCreationTokens: usage.cacheCreationTokens,
+    outputTokens: usage.outputTokens,
+    reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),
+    hasSubagents: usage.hasSubagents,
+  };
 }
 
 export interface OpenCodeAdapterLiveOptions {
@@ -1048,6 +1112,7 @@ export function makeOpenCodeAdapter(
       ) {
         context.pendingIdleReconciliation = undefined;
       }
+      const tokenUsage = takeOpenCodeTurnTokenUsage(context, true);
       context.activeTurnId = undefined;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
@@ -1072,6 +1137,7 @@ export function makeOpenCodeAdapter(
         type: "turn.completed",
         payload: {
           state: "completed",
+          tokenUsage,
         },
       });
     });
@@ -1209,6 +1275,7 @@ export function makeOpenCodeAdapter(
         deleteContextIfCurrent(context);
         return;
       }
+      const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
       context.promptAdmission = undefined;
       context.activeTurnId = undefined;
       context.activeAgent = undefined;
@@ -1230,6 +1297,7 @@ export function makeOpenCodeAdapter(
         payload: {
           state: "failed",
           errorMessage: detail,
+          tokenUsage,
         },
       });
       yield* emit({
@@ -1407,7 +1475,13 @@ export function makeOpenCodeAdapter(
       if (cancellation) {
         context.cancellation = undefined;
       }
+      let tokenUsage: TurnTokenUsage = {
+        usageStatus: "unavailable",
+        usageScope: "main_agent",
+        hasSubagents: false,
+      };
       if (context.activeTurnId === turnId) {
+        tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
         context.activeTurnId = undefined;
         context.activeAgent = undefined;
         context.activeVariant = undefined;
@@ -1426,6 +1500,7 @@ export function makeOpenCodeAdapter(
         type: "turn.aborted",
         payload: {
           reason: "Interrupted by user.",
+          tokenUsage,
         },
       });
       if (cancellation) {
@@ -1912,6 +1987,9 @@ export function makeOpenCodeAdapter(
         }
         yield* schedulePendingRequestRecovery(context);
         if (!isFirstConnection) {
+          if (context.turnTokenUsage) {
+            context.turnTokenUsage.complete = false;
+          }
           yield* schedulePromptAdmissionRecovery(context, event);
         }
         return;
@@ -1929,6 +2007,9 @@ export function makeOpenCodeAdapter(
         const session = event.properties.info;
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
           context.relatedSessionIds.add(session.id);
+          if (context.activeTurnId && context.turnTokenUsage) {
+            context.turnTokenUsage.hasSubagents = true;
+          }
         }
       } else if (event.type === "session.deleted") {
         context.relatedSessionIds.delete(event.properties.info.id);
@@ -2101,6 +2182,10 @@ export function makeOpenCodeAdapter(
           context.partById.set(part.id, part);
           const messageRole = messageRoleForPart(context, part);
 
+          if (turnId && part.type === "step-finish" && context.turnTokenUsage) {
+            accumulateOpenCodeStepUsage(context.turnTokenUsage, part);
+          }
+
           if (messageRole === "assistant") {
             yield* emitAssistantTextDelta(context, part, turnId, event);
           }
@@ -2259,6 +2344,7 @@ export function makeOpenCodeAdapter(
             terminalCancellation.turnSettled = true;
             terminalCancellation.acknowledged = true;
           }
+          const tokenUsage = activeTurnId ? takeOpenCodeTurnTokenUsage(context, false) : undefined;
           context.activeTurnId = undefined;
           context.activeAgent = undefined;
           context.activeVariant = undefined;
@@ -2282,6 +2368,7 @@ export function makeOpenCodeAdapter(
               payload: {
                 state: "failed",
                 errorMessage: message,
+                tokenUsage,
               },
             });
           }
@@ -2563,6 +2650,7 @@ export function makeOpenCodeAdapter(
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
+          turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
@@ -2735,6 +2823,9 @@ export function makeOpenCodeAdapter(
           context.promptAdmission = promptAdmission;
 
           context.activeTurnId = turnId;
+          if (steeringTurnId === undefined) {
+            context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
+          }
           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
           context.activeVariant = variant;
           if (steeringTurnId === undefined) {
@@ -2819,6 +2910,7 @@ export function makeOpenCodeAdapter(
                         }
                         return;
                       }
+                      const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                       context.promptAdmission = undefined;
                       context.activeTurnId = undefined;
                       context.activeAgent = undefined;
@@ -2835,7 +2927,10 @@ export function makeOpenCodeAdapter(
                       yield* emit({
                         ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
                         type: "turn.aborted",
-                        payload: { reason: requestError.detail },
+                        payload: {
+                          reason: requestError.detail,
+                          tokenUsage,
+                        },
                       });
                       return;
                     }
@@ -2863,6 +2958,7 @@ export function makeOpenCodeAdapter(
                       });
                       return;
                     }
+                    const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                     context.promptAdmission = undefined;
                     context.activeTurnId = undefined;
                     context.activeAgent = undefined;
@@ -2886,6 +2982,7 @@ export function makeOpenCodeAdapter(
                       type: "turn.aborted",
                       payload: {
                         reason: requestError.detail,
+                        tokenUsage,
                       },
                     });
                   }),

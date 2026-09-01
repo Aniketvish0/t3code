@@ -22,6 +22,7 @@ import {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
+  classifyTaskAgentKind,
   type CanonicalItemType,
   type CanonicalRequestType,
   type ClaudeSettings,
@@ -36,6 +37,7 @@ import {
   type ProviderSendTurnInput,
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
+  type TurnTokenUsage,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
   RuntimeItemId,
@@ -151,6 +153,7 @@ interface ClaudeTurnState {
   readonly capturedProposedPlanKeys: Set<string>;
   latestAssistantUsage: unknown | undefined;
   compactedSinceLatestAssistantUsage: boolean;
+  hasSubagents: boolean;
   nextSyntheticAssistantBlockIndex: number;
 }
 
@@ -600,6 +603,67 @@ function normalizeClaudeActiveTokenUsage(
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
   });
+}
+
+function normalizeClaudeTurnTokenUsage(
+  result: SDKResultMessage | undefined,
+  hasSubagents: boolean,
+  terminalStatus: ProviderRuntimeTurnStatus,
+): TurnTokenUsage {
+  const usage = result?.usage as Record<string, unknown> | undefined;
+  if (!usage) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents,
+    };
+  }
+
+  const uncachedInputTokens = finiteNonNegativeInteger(usage.input_tokens);
+  const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
+  const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
+  const rawOutputTokens = finiteNonNegativeInteger(usage.output_tokens);
+  const inputTokens =
+    uncachedInputTokens !== undefined &&
+    cachedInputTokens !== undefined &&
+    cacheCreationTokens !== undefined
+      ? uncachedInputTokens + cachedInputTokens + cacheCreationTokens
+      : undefined;
+  const hasKnownUsage =
+    uncachedInputTokens !== undefined ||
+    cachedInputTokens !== undefined ||
+    cacheCreationTokens !== undefined ||
+    rawOutputTokens !== undefined;
+  const hasPositiveUsage =
+    (uncachedInputTokens ?? 0) +
+      (cachedInputTokens ?? 0) +
+      (cacheCreationTokens ?? 0) +
+      (rawOutputTokens ?? 0) >
+    0;
+
+  if (!hasKnownUsage || (result?.subtype !== "success" && !hasPositiveUsage)) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents,
+    };
+  }
+
+  return {
+    usageStatus:
+      terminalStatus === "completed" &&
+      result?.subtype === "success" &&
+      inputTokens !== undefined &&
+      rawOutputTokens !== undefined
+        ? "complete"
+        : "partial",
+    usageScope: "main_agent",
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+    ...(rawOutputTokens !== undefined ? { outputTokens: rawOutputTokens } : {}),
+    hasSubagents,
+  };
 }
 
 function compactBoundaryTokenUsageSnapshot(
@@ -2396,6 +2460,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
         ...(errorMessage ? { errorMessage } : {}),
+        tokenUsage: normalizeClaudeTurnTokenUsage(result, turnState.hasSubagents, status),
       },
       providerRefs: nativeProviderRefs(context),
     });
@@ -2935,6 +3000,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         capturedProposedPlanKeys: new Set(),
         latestAssistantUsage: undefined,
         compactedSinceLatestAssistantUsage: false,
+        hasSubagents: false,
         nextSyntheticAssistantBlockIndex: -1,
       };
       context.session = {
@@ -3241,6 +3307,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             )
           : undefined;
         const owningAgentId = launchingTool?.agentId;
+        if (
+          context.turnState &&
+          classifyTaskAgentKind({
+            taskType: message.task_type,
+            ...(owningAgentId ? { agentId: owningAgentId } : {}),
+          }) === "agent"
+        ) {
+          context.turnState.hasSubagents = true;
+        }
         // Model/effort: the Agent tool's input carries explicit overrides;
         // absent ones inherit the session's selection (SDK behavior).
         // Subagent assistant snapshots refine model with the authoritative API
@@ -4596,6 +4671,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         capturedProposedPlanKeys: new Set(),
         latestAssistantUsage: undefined,
         compactedSinceLatestAssistantUsage: false,
+        hasSubagents: false,
         nextSyntheticAssistantBlockIndex: -1,
       };
 

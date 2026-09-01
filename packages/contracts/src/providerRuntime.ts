@@ -364,6 +364,24 @@ const TurnStartedPayload = Schema.Struct({
 });
 export type TurnStartedPayload = typeof TurnStartedPayload.Type;
 
+/**
+ * Normalized main-agent usage for one turn. Input includes cache reads and
+ * writes. Output includes reasoning, and reasoningTokens is an optional subset.
+ * Complete means the provider supplied full input and output totals. Partial
+ * means every included count is valid, but the full turn total is not known.
+ */
+export const TurnTokenUsage = Schema.Struct({
+  usageStatus: Schema.Literals(["complete", "partial", "unavailable"]),
+  usageScope: Schema.Literal("main_agent"),
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  cacheCreationTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningTokens: Schema.optional(NonNegativeInt),
+  hasSubagents: Schema.Boolean,
+});
+export type TurnTokenUsage = typeof TurnTokenUsage.Type;
+
 const TurnCompletedPayload = Schema.Struct({
   state: RuntimeTurnState,
   stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
@@ -371,11 +389,13 @@ const TurnCompletedPayload = Schema.Struct({
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+  tokenUsage: Schema.optional(TurnTokenUsage),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
 
 const TurnAbortedPayload = Schema.Struct({
   reason: TrimmedNonEmptyStringSchema,
+  tokenUsage: Schema.optional(TurnTokenUsage),
 });
 export type TurnAbortedPayload = typeof TurnAbortedPayload.Type;
 
