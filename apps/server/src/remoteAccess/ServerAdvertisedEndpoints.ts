@@ -55,10 +55,21 @@ const resolveBindingMode = (host: string | undefined): BindingMode => {
   return "specific";
 };
 
-/** Tailscale Serve proxies to 127.0.0.1, so its HTTPS endpoint stays reachable
- * under a loopback binding; the plain Tailnet-IP HTTP endpoints do not. */
+/** Tailscale Serve proxies to 127.0.0.1 (see `ensureTailscaleServe`), so its
+ * HTTPS endpoint stays reachable under a loopback binding; the plain
+ * Tailnet-IP HTTP endpoints do not. */
 const isHttpsEndpoint = (endpoint: AdvertisedEndpoint): boolean =>
   endpoint.httpBaseUrl.startsWith("https://");
+
+/** The loopback address the server actually listens on. An unset host binds
+ * 127.0.0.1 (see server.ts); an explicit `::1` or `127.0.0.2` must be echoed
+ * back or the advertised URL points at an address nobody is listening on. */
+const resolveLoopbackHost = (host: string | undefined): string =>
+  !host || host === "localhost" ? "127.0.0.1" : host;
+
+/** Serve only forwards to 127.0.0.1, so it can reach the server only when the
+ * server listens there. */
+const isTailscaleServeReachable = (loopbackHost: string): boolean => loopbackHost === "127.0.0.1";
 
 export interface ResolveServerAdvertisedEndpointsInput {
   readonly port: number;
@@ -74,19 +85,22 @@ export function resolveServerAdvertisedEndpoints(
   input: ResolveServerAdvertisedEndpointsInput,
 ): readonly AdvertisedEndpoint[] {
   const mode = resolveBindingMode(input.host);
+  const loopbackHost = mode === "loopback" ? resolveLoopbackHost(input.host) : "127.0.0.1";
   const loopbackEndpoint = createAdvertisedEndpoint({
     provider: SERVER_ENDPOINT_PROVIDER,
     source: "server",
     id: `server-loopback:${input.port}`,
     label: "This machine",
-    httpBaseUrl: `http://127.0.0.1:${input.port}`,
+    httpBaseUrl: `http://${formatHostForUrl(loopbackHost)}:${input.port}`,
     reachability: "loopback",
     status: "available",
     description: "Loopback endpoint for this server.",
   });
 
   if (mode === "loopback") {
-    return [loopbackEndpoint, ...input.tailscaleEndpoints.filter(isHttpsEndpoint)];
+    return isTailscaleServeReachable(loopbackHost)
+      ? [loopbackEndpoint, ...input.tailscaleEndpoints.filter(isHttpsEndpoint)]
+      : [loopbackEndpoint];
   }
 
   if (mode === "specific") {
@@ -179,7 +193,10 @@ export const make = Effect.gen(function* () {
     // Skip the Tailscale resolver when nothing Tailscale-reachable could exist:
     // spawning the CLI triggers a macOS TCC prompt on sandboxed installs.
     const shouldResolveTailscale =
-      mode === "wildcard" || (mode === "loopback" && config.tailscaleServeEnabled);
+      mode === "wildcard" ||
+      (mode === "loopback" &&
+        config.tailscaleServeEnabled &&
+        isTailscaleServeReachable(resolveLoopbackHost(config.host)));
     const tailscaleEndpoints = shouldResolveTailscale
       ? yield* resolveTailscaleAdvertisedEndpoints({
           port,

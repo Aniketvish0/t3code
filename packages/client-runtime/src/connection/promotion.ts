@@ -77,10 +77,9 @@ export function selectPromotionCandidates(input: {
     .slice(0, MAX_PROBED_CANDIDATES);
 }
 
-interface PromotionCooldown {
-  readonly endpointId: string;
-  readonly failedAtEpochMs: number;
-}
+/** Failure time per endpoint id. Keyed per endpoint (not per environment) so
+ * two flaky routes cannot clear each other's cooldown. */
+type PromotionCooldowns = ReadonlyMap<string, number>;
 
 /**
  * Discovers direct routes for relay-connected environments and remembers the
@@ -132,7 +131,7 @@ export const make = Effect.gen(function* () {
   const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
   const httpClient = yield* HttpClient.HttpClient;
   const overrides = yield* Ref.make<ReadonlyMap<EnvironmentId, PromotedRoute>>(new Map());
-  const cooldowns = yield* Ref.make<ReadonlyMap<EnvironmentId, PromotionCooldown>>(new Map());
+  const cooldowns = yield* Ref.make<ReadonlyMap<EnvironmentId, PromotionCooldowns>>(new Map());
 
   const overrideFor = Effect.fn("ConnectionPromotion.overrideFor")(function* (
     environmentId: EnvironmentId,
@@ -156,7 +155,9 @@ export const make = Effect.gen(function* () {
     });
     yield* Ref.update(cooldowns, (current) => {
       const next = new Map(current);
-      next.set(environmentId, { endpointId: override.endpointId, failedAtEpochMs: now });
+      const forEnvironment = new Map(current.get(environmentId) ?? []);
+      forEnvironment.set(override.endpointId, now);
+      next.set(environmentId, forEnvironment);
       return next;
     });
     yield* Effect.logInfo("Direct environment route failed; falling back to the relay.").pipe(
@@ -167,21 +168,30 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Returns the endpoint ids still cooling down and prunes expired entries.
   const activeCooldownEndpointIds = Effect.fnUntraced(function* (environmentId: EnvironmentId) {
-    const cooldown = (yield* Ref.get(cooldowns)).get(environmentId);
-    if (cooldown === undefined) {
+    const forEnvironment = (yield* Ref.get(cooldowns)).get(environmentId);
+    if (forEnvironment === undefined) {
       return new Set<string>();
     }
     const now = yield* Clock.currentTimeMillis;
-    if (cooldown.failedAtEpochMs + PROMOTION_FAILURE_COOLDOWN_MS <= now) {
+    const active = new Map(
+      [...forEnvironment].filter(
+        ([, failedAtEpochMs]) => failedAtEpochMs + PROMOTION_FAILURE_COOLDOWN_MS > now,
+      ),
+    );
+    if (active.size !== forEnvironment.size) {
       yield* Ref.update(cooldowns, (current) => {
         const next = new Map(current);
-        next.delete(environmentId);
+        if (active.size === 0) {
+          next.delete(environmentId);
+        } else {
+          next.set(environmentId, active);
+        }
         return next;
       });
-      return new Set<string>();
     }
-    return new Set([cooldown.endpointId]);
+    return new Set(active.keys());
   });
 
   const probeCandidate = Effect.fnUntraced(function* (

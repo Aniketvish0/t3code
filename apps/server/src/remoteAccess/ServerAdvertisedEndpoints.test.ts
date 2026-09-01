@@ -126,4 +126,20 @@ describe("resolveServerAdvertisedEndpoints", () => {
       [["server-private-network:http://100.100.100.100:3773", "private-network"]],
     );
   });
+
+  it("echoes an explicit IPv6 loopback binding instead of assuming 127.0.0.1", () => {
+    const endpoints = resolveServerAdvertisedEndpoints({
+      port: 3773,
+      host: "::1",
+      networkInterfaces: {},
+      tailscaleEndpoints: [tailscaleServeEndpoint],
+    });
+
+    // Tailscale Serve only forwards to 127.0.0.1, which this binding does not
+    // listen on, so the HTTPS endpoint is withheld too.
+    assert.deepEqual(
+      endpoints.map((endpoint) => endpoint.httpBaseUrl),
+      ["http://[::1]:3773/"],
+    );
+  });
 });

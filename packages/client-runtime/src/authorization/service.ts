@@ -370,8 +370,14 @@ export const make = Effect.gen(function* () {
         });
       }
       // The descriptor check keeps us from talking to an unrelated server that
-      // answers on the direct address.
-      const descriptor = yield* fetchDescriptor(input.endpoint.httpBaseUrl).pipe(
+      // answers on the direct address. It uses the short cached-endpoint
+      // timeout so a black-holed LAN address leaves the establish budget
+      // (15s in the supervisor) mostly intact for the relay fallback.
+      const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+        httpBaseUrl: input.endpoint.httpBaseUrl,
+        timeoutMs: CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+      }).pipe(
+        Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
