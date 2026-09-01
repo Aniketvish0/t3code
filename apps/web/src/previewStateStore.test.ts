@@ -444,6 +444,29 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(3);
   });
 
+  it("applies an ordered resize response when the server clock moves backward", () => {
+    const snapshot = makeSnapshot({ updatedAt: "2026-01-01T00:00:02.000Z" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const resized = {
+      ...snapshot,
+      viewport: { _tag: "freeform" as const, width: 1024, height: 768 },
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    };
+
+    updatePreviewServerSnapshot(ref, {
+      ...resized,
+      stateVersion: { serverEpoch, revision: 2 },
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(resized);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(2);
+  });
+
   it("rejects a resize response superseded by a same-tab server event", () => {
     const snapshot = makeSnapshot();
     reconcilePreviewServerSessions(ref, {
@@ -764,6 +787,30 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.sessions[snapshot.tabId]).toEqual(resized);
     expect(state.serverRevision).toBe(5);
     expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(6);
+  });
+
+  it("applies a newer ordered list when the server clock moves backward", () => {
+    const snapshot = makeSnapshot({ updatedAt: "2026-01-01T00:00:02.000Z" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch,
+      revision: 1,
+    });
+    const listed = {
+      ...snapshot,
+      navStatus: { _tag: "Success" as const, url: "https://example.com", title: "Example" },
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    };
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [listed],
+      serverEpoch,
+      revision: 2,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[snapshot.tabId]).toEqual(listed);
+    expect(state.serverRevisionByTabId[snapshot.tabId]).toBe(2);
   });
 
   it("reconciles an authoritative session list without focusing a background tab", () => {

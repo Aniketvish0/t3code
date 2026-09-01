@@ -336,7 +336,7 @@ export function updatePreviewServerSnapshot(
     } = snapshot;
     if (current.suppressedTabIds.has(sessionSnapshot.tabId)) return current;
     const existing = current.sessions[sessionSnapshot.tabId];
-    if (existing && existing.updatedAt > sessionSnapshot.updatedAt) return current;
+    if (!stateVersion && existing && existing.updatedAt > sessionSnapshot.updatedAt) return current;
     const sessions = { ...current.sessions, [sessionSnapshot.tabId]: sessionSnapshot };
     const activeTabId =
       current.activeTabId && sessions[current.activeTabId]
@@ -378,11 +378,13 @@ export function reconcilePreviewServerSessions(
     for (const snapshot of snapshots) {
       if (currentSuppressedTabIds.has(snapshot.tabId)) continue;
       const existing = sameServer ? current.sessions[snapshot.tabId] : undefined;
-      const hasNewerTabState =
-        sameServer && (current.serverRevisionByTabId[snapshot.tabId] ?? 0) > result.revision;
+      const tabRevision = sameServer ? (current.serverRevisionByTabId[snapshot.tabId] ?? 0) : 0;
+      const hasNewerTabState = sameServer && tabRevision > result.revision;
       if (hasNewerTabState && !existing) continue;
       const next =
-        existing && (hasNewerTabState || existing.updatedAt > snapshot.updatedAt)
+        existing &&
+        (hasNewerTabState ||
+          (tabRevision === result.revision && existing.updatedAt > snapshot.updatedAt))
           ? existing
           : snapshot;
       sessions[next.tabId] = next;
