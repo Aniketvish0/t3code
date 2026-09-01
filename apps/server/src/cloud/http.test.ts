@@ -253,6 +253,8 @@ describe("reconcileDesiredCloudLink", () => {
     readonly linkResponse: (
       request: HttpClientRequest.HttpClientRequest,
     ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
+    readonly failIntentRemoval?: boolean;
+    readonly failResumeWrite?: boolean;
   }) {
     const values = new Map<string, Uint8Array>([
       [CLOUD_CLI_DESIRED_LINK_SECRET, new TextEncoder().encode("managed")],
@@ -265,8 +267,16 @@ describe("reconcileDesiredCloudLink", () => {
     const store: ServerSecretStore.ServerSecretStore["Service"] = {
       get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
       set: (name, value) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
+          if (
+            input.failResumeWrite &&
+            name === CLOUD_CLI_LINK_INTENT_SECRET &&
+            new TextDecoder().decode(value) === "resume"
+          ) {
+            return Effect.fail(storeFailure("PermissionDenied"));
+          }
           values.set(name, value);
+          return Effect.void;
         }),
       create: (name, value) =>
         Effect.sync(() => {
@@ -274,8 +284,22 @@ describe("reconcileDesiredCloudLink", () => {
         }),
       getOrCreateRandom: unusedSecretStoreOperation,
       remove: (name) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
+          if (input.failIntentRemoval && name === CLOUD_CLI_LINK_INTENT_SECRET) {
+            return Effect.fail(
+              new ServerSecretStore.SecretStoreRemoveError({
+                resource: "cloud CLI link intent",
+                cause: PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: "cloud-cli-link-intent.bin",
+                }),
+              }),
+            );
+          }
           values.delete(name);
+          return Effect.void;
         }),
     };
     const applyConfigCalls: Array<unknown> = [];
@@ -427,12 +451,62 @@ describe("reconcileDesiredCloudLink", () => {
     return Effect.gen(function* () {
       yield* Effect.flip(harness.run);
 
-      expect(harness.linkIntentsAtRequest).toEqual(["resume"]);
+      expect(harness.linkIntentsAtRequest).toEqual([null]);
       expect(harness.linkPayloads).toHaveLength(1);
       expect(harness.linkPayloads[0]?.intent).toBe("explicit");
+      expect(harness.values.has(CLOUD_CLI_LINK_INTENT_SECRET)).toBe(false);
+    });
+  });
+
+  it.effect("does not contact the relay when explicit intent cannot be consumed", () => {
+    const harness = makeReconcileHarness({
+      failIntentRemoval: true,
+      linkResponse: () => unusedSecretStoreOperation(),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(harness.run);
+
+      expect(error).toMatchObject({ _tag: "EnvironmentHttpInternalServerError" });
+      expect(harness.requests).toEqual([]);
       expect(new TextDecoder().decode(harness.values.get(CLOUD_CLI_LINK_INTENT_SECRET))).toBe(
-        "resume",
+        "explicit",
       );
+    });
+  });
+
+  it.effect("does not restore explicit intent when resume persistence fails", () => {
+    const harness = makeReconcileHarness({
+      failResumeWrite: true,
+      linkResponse: (request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              ok: true,
+              cloudUserId: "user_123",
+              environmentId: descriptor.environmentId,
+              endpoint: {
+                httpBaseUrl: "https://managed.example.test/",
+                wsBaseUrl: "wss://managed.example.test/ws",
+                providerKind: "cloudflare_tunnel",
+              },
+              endpointRuntime: null,
+              relayIssuer: "https://relay.example.test",
+              environmentCredential: "environment-credential",
+              cloudMintPublicKey: "cloud-mint-public-key",
+            }),
+          ),
+        ),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(harness.run);
+
+      expect(error).toMatchObject({ _tag: "EnvironmentHttpInternalServerError" });
+      expect(harness.requests).toHaveLength(2);
+      expect(harness.linkPayloads[0]?.intent).toBe("explicit");
+      expect(harness.values.has(CLOUD_CLI_LINK_INTENT_SECRET)).toBe(false);
     });
   });
 });

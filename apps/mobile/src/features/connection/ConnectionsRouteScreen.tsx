@@ -3,6 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,6 +22,7 @@ import {
   useManagedRelayEnvironments,
 } from "../cloud/managedRelayState";
 import { relayEnvironmentDiscovery } from "../../state/relay";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 function accountEnvironmentKind(environment: RelayClientEnvironmentRecord): string {
@@ -48,9 +50,7 @@ export function ConnectionsRouteScreen() {
     reportFailure: false,
   });
   const pendingRemovalRef = useRef(false);
-  const currentAccountIdRef = useRef(accountEnvironments.accountId);
   const [removingEnvironmentId, setRemovingEnvironmentId] = useState<EnvironmentId | null>(null);
-  currentAccountIdRef.current = accountEnvironments.accountId;
 
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
@@ -69,7 +69,7 @@ export function ConnectionsRouteScreen() {
       pendingRemovalRef.current = false;
       setRemovingEnvironmentId(null);
 
-      if (currentAccountIdRef.current !== accountId) return;
+      if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
       if (result._tag === "Success") {
         accountEnvironments.refresh();
         void refreshRelayEnvironments();

@@ -86,6 +86,7 @@ describe("liveActivityPreferences", () => {
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledWith({
         clerkToken: "clerk-token",
         connection,
+        intent: "resume",
         liveActivitiesEnabled: false,
       });
     }).pipe(Effect.provide(testLayer)),
@@ -106,6 +107,7 @@ describe("liveActivityPreferences", () => {
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledWith({
         clerkToken: "clerk-token",
         connection,
+        intent: "resume",
         liveActivitiesEnabled: true,
       });
     }).pipe(Effect.provide(testLayer)),
@@ -145,6 +147,7 @@ describe("liveActivityPreferences", () => {
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledWith({
         clerkToken: "clerk-token",
         connection,
+        intent: "resume",
         liveActivitiesEnabled: true,
       });
     }).pipe(Effect.provide(testLayer));
@@ -175,11 +178,13 @@ describe("liveActivityPreferences", () => {
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(1, {
         clerkToken: "clerk-token",
         connection,
+        intent: "resume",
         liveActivitiesEnabled: false,
       });
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(2, {
         clerkToken: "clerk-token",
         connection,
+        intent: "resume",
         liveActivitiesEnabled: true,
       });
     }).pipe(Effect.provide(testLayer));

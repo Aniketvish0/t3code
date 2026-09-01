@@ -3390,7 +3390,7 @@ export function ConnectionsSettings() {
       )}
 
       {hasCloudPublicConfig() && managedRelaySession ? (
-        <SettingsSection title="T3 Connect account">
+        <SettingsSection title={searchableSetting("t3-connect-account").title}>
           <ManagedRelayEnvironmentRows />
         </SettingsSection>
       ) : null}

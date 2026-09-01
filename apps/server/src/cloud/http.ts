@@ -80,8 +80,8 @@ import {
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
   clearPersistedCloudLink,
+  consumeCliLinkIntent,
   readCliDesiredCloudLink,
-  readCliLinkIntent,
   readCliDesiredLinkMode,
   setCliDesiredCloudLink,
 } from "./CliState.ts";
@@ -588,7 +588,9 @@ export const reconcileDesiredCloudLinkWith = Effect.fn(
       ),
     );
     const mode = yield* readCliDesiredLinkMode;
-    const linkIntent = yield* readCliLinkIntent;
+    // Explicit relink permission is single-use. Consume it before any relay
+    // request so every failure after this point retries as a resume.
+    const linkIntent = yield* consumeCliLinkIntent;
     const managedTunnelsEnabled = mode !== "publish_only";
     const relayUrl = yield* requireRelayUrl;
     const challenge = yield* relayClientRequest(dependencies, {
@@ -618,12 +620,6 @@ export const reconcileDesiredCloudLinkWith = Effect.fn(
       },
       localOrigin,
     );
-    // Explicit relink permission is single-use. A response can be lost after
-    // the relay accepts it, so later retries must resume instead of silently
-    // restoring a link removed in the meantime.
-    if (linkIntent === "explicit") {
-      yield* setCliDesiredCloudLink(true, mode, "resume");
-    }
     const link = yield* relayClientRequest(dependencies, {
       url: `${relayUrl}/v1/client/environment-links`,
       token: token.accessToken,
@@ -637,13 +633,14 @@ export const reconcileDesiredCloudLinkWith = Effect.fn(
       schema: RelayEnvironmentLinkResponse,
       recognizeRevokedLink: true,
     }).pipe(
-      Effect.catchTag("EnvironmentHttpConflictError", (error) =>
-        Effect.gen(function* () {
-          yield* dependencies.endpointRuntime.applyConfig(null);
-          yield* clearPersistedCloudLink;
-          return yield* error;
-        }),
-      ),
+      Effect.catchTags({
+        EnvironmentHttpConflictError: (error) =>
+          Effect.gen(function* () {
+            yield* dependencies.endpointRuntime.applyConfig(null);
+            yield* clearPersistedCloudLink;
+            return yield* error;
+          }),
+      }),
     );
     yield* setCliDesiredCloudLink(true, mode, "resume");
     return yield* applyCloudRelayConfig(dependencies, {

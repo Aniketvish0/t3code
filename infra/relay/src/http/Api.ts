@@ -465,13 +465,14 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       })
       .pipe(
         Effect.as(false),
-        Effect.catchTag("ManagedEndpointDeprovisioningFailed", (error) =>
-          Effect.logWarning("Managed endpoint cleanup remains pending after unlink", {
-            userId: input.userId,
-            environmentId: input.environmentId,
-            stage: error.stage,
-          }).pipe(Effect.as(true)),
-        ),
+        Effect.catchTags({
+          ManagedEndpointDeprovisioningFailed: (error) =>
+            Effect.logWarning("Managed endpoint cleanup remains pending after unlink", {
+              userId: input.userId,
+              environmentId: input.environmentId,
+              stage: error.stage,
+            }).pipe(Effect.as(true)),
+        }),
       );
     return { unlinked, cleanupPending };
   },

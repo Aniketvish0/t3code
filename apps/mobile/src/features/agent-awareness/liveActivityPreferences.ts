@@ -29,6 +29,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
           linkEnvironmentToCloudWithPreference({
             clerkToken,
             connection,
+            intent: "resume",
             liveActivitiesEnabled: enabled,
           }),
         { concurrency: "unbounded" },
@@ -53,6 +54,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
           linkEnvironmentToCloudWithPreference({
             clerkToken,
             connection,
+            intent: "resume",
             liveActivitiesEnabled: input.previousEnabled,
           }).pipe(
             Effect.catchCause((cause) =>

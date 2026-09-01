@@ -1,4 +1,4 @@
-import { RelayAuthInvalidError } from "@t3tools/contracts/relay";
+import { RelayAuthInvalidError, RelayEnvironmentLinkRevokedError } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -53,5 +53,16 @@ describe("relayProtectedErrorMessage", () => {
     });
 
     expect(relayProtectedErrorMessage(error)).toBe("Relay rejected the cloud session token.");
+  });
+
+  it("explains how to restore a revoked environment link", () => {
+    const error = new RelayEnvironmentLinkRevokedError({
+      code: "environment_link_revoked",
+      traceId: "trace-1",
+    });
+
+    expect(relayProtectedErrorMessage(error)).toBe(
+      "This environment was removed from the T3 Connect account. Link it again to restore access.",
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -23,6 +24,36 @@ import { useManagedRelayEnvironments } from "./managedRelayState";
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
   readonly publish: boolean;
+}
+
+export function resolveAccountEnvironmentMembership(input: {
+  readonly account: {
+    readonly accountId: string | null;
+    readonly data: ReadonlyArray<
+      Pick<RelayClientEnvironmentRecord, "environmentId" | "cleanupPending">
+    > | null;
+    readonly error: string | null;
+    readonly isPending: boolean;
+  };
+  readonly cloudUserId: string | null | undefined;
+  readonly configuredRelayUrl: string | null;
+  readonly environmentId: RelayClientEnvironmentRecord["environmentId"] | null;
+  readonly linkedRelayUrl: string | null;
+}): boolean | null {
+  if (
+    input.account.accountId === null ||
+    input.account.data === null ||
+    input.configuredRelayUrl === null ||
+    input.environmentId === null ||
+    input.linkedRelayUrl !== input.configuredRelayUrl ||
+    input.cloudUserId !== input.account.accountId
+  ) {
+    return null;
+  }
+  return input.account.data.some(
+    (environment) =>
+      environment.environmentId === input.environmentId && !environment.cleanupPending,
+  );
 }
 
 /**
@@ -81,23 +112,14 @@ export function useCloudLinkController() {
   const locallyLinked = primaryCloudLinkState.data?.linked ?? false;
   const configuredRelayUrl = resolveCloudPublicConfig().relayUrl;
   const linkedRelayUrl = normalizeSecureRelayUrl(primaryCloudLinkState.data?.relayUrl ?? "");
-  const accountMembershipKnown =
-    accountEnvironments.accountId !== null &&
-    accountEnvironments.data !== null &&
-    accountEnvironments.error === null &&
-    !accountEnvironments.isPending &&
-    configuredRelayUrl !== null &&
-    linkedRelayUrl === configuredRelayUrl &&
-    primaryCloudLinkState.data?.cloudUserId === accountEnvironments.accountId;
-  const accountHasPrimaryEnvironment =
-    primaryCloudLinkState.target !== null &&
-    accountEnvironments.data?.some(
-      (environment) =>
-        environment.environmentId === primaryCloudLinkState.target?.environmentId &&
-        !environment.cleanupPending,
-    );
-  const linked =
-    locallyLinked && (!accountMembershipKnown || accountHasPrimaryEnvironment === true);
+  const accountHasPrimaryEnvironment = resolveAccountEnvironmentMembership({
+    account: accountEnvironments,
+    cloudUserId: primaryCloudLinkState.data?.cloudUserId,
+    configuredRelayUrl,
+    environmentId: primaryCloudLinkState.target?.environmentId ?? null,
+    linkedRelayUrl,
+  });
+  const linked = locallyLinked && accountHasPrimaryEnvironment !== false;
   const managedTunnelActive = linked && locallyManagedTunnelActive;
   const publishAgentActivity = linked && locallyPublishAgentActivity;
 

@@ -44,12 +44,14 @@ export const readCliDesiredLinkMode = Effect.gen(function* () {
     : ("managed" as CliDesiredLinkMode);
 });
 
-export const readCliLinkIntent = Effect.gen(function* () {
+export const consumeCliLinkIntent = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const value = yield* secrets.get(CLOUD_CLI_LINK_INTENT_SECRET);
-  return Option.isSome(value) && new TextDecoder().decode(value.value) === "explicit"
-    ? ("explicit" as const)
-    : ("resume" as const);
+  if (Option.isNone(value) || new TextDecoder().decode(value.value) !== "explicit") {
+    return "resume" as const;
+  }
+  yield* secrets.remove(CLOUD_CLI_LINK_INTENT_SECRET);
+  return "explicit" as const;
 });
 
 export const setCliDesiredCloudLink = Effect.fn("cloud.cli_state.set_desired")(function* (

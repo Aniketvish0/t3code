@@ -426,6 +426,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "t3-connect-account",
+    title: "T3 Connect account",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["cloud registered environments remove unlink tunnel cleanup"],
+    cloudOnly: true,
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",

@@ -253,7 +253,10 @@ type LinkEnvironmentToCloudRequirements =
   | MobileStorage.MobileStorage;
 
 export function linkEnvironmentToCloudWithPreference(
-  input: LinkEnvironmentToCloudInput & { readonly liveActivitiesEnabled: boolean },
+  input: LinkEnvironmentToCloudInput & {
+    readonly intent: "explicit" | "resume";
+    readonly liveActivitiesEnabled: boolean;
+  },
 ): Effect.Effect<void, CloudEnvironmentLinkError, LinkEnvironmentToCloudRequirements> {
   return Effect.gen(function* () {
     if (!input.connection.bearerToken) {
@@ -303,7 +306,7 @@ export function linkEnvironmentToCloudWithPreference(
       .linkEnvironment({
         clerkToken: input.clerkToken,
         payload: {
-          intent: "explicit",
+          ...(input.intent === "explicit" ? { intent: "explicit" as const } : {}),
           deviceId,
           proof,
           notificationsEnabled: true,
@@ -351,6 +354,7 @@ export function linkEnvironmentToCloud(
     Effect.flatMap((preferences) =>
       linkEnvironmentToCloudWithPreference({
         ...input,
+        intent: "explicit",
         liveActivitiesEnabled: preferences.liveActivitiesEnabled !== false,
       }),
     ),

@@ -794,6 +794,7 @@ describe("mobile cloud link environment client", () => {
       });
       expect(bodies[2]).toMatchObject({
         deviceId: "device-1",
+        intent: "explicit",
         notificationsEnabled: true,
         liveActivitiesEnabled: false,
         managedTunnelsEnabled: true,
@@ -833,6 +834,7 @@ describe("mobile cloud link environment client", () => {
         linkEnvironmentToCloudWithPreference({
           clerkToken: "clerk-token",
           connection: savedConnection,
+          intent: "resume",
           liveActivitiesEnabled: true,
         }),
       );
@@ -841,6 +843,7 @@ describe("mobile cloud link environment client", () => {
         expect.objectContaining({ liveActivitiesEnabled: true }),
         expect.objectContaining({ liveActivitiesEnabled: true }),
       ]);
+      expect(bodies[2]).not.toHaveProperty("intent");
     }),
   );
 

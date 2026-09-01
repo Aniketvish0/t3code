@@ -84,6 +84,7 @@ describe("searchSettings", () => {
     expect(searchSettings("pull request template")[0]?.id).toBe("follow-change-request-templates");
     expect(searchSettings("git security keys")[0]?.id).toBe("git-fetch-interval");
     expect(searchSettings("push notifications")[0]?.id).toBe("publish-agent-activity");
+    expect(searchSettings("registered environments")[0]?.id).toBe("t3-connect-account");
     expect(searchSettings("battery saver")[0]?.id).toBe("background-activity");
     expect(searchSettings("binary path")[0]?.id).toBe("providers");
     expect(searchSettings("authorized clients")[0]?.id).toBe("connections-environment");
@@ -146,6 +147,7 @@ describe("searchSettings", () => {
       "source-control-writer-model",
       "source-control-writing-style",
       "t3-connect",
+      "t3-connect-account",
       "tailscale-https",
       "wsl-backend",
       "auto-settle-inactive-threads",
