@@ -101,7 +101,9 @@ export function T3ConnectEnvironmentRow(props: {
                   onClick={() => props.onDeregister(environment)}
                 >
                   {props.mutationPending
-                    ? "Working..."
+                    ? environment.cleanupPending
+                      ? "Retrying cleanup..."
+                      : "Removing..."
                     : environment.cleanupPending
                       ? "Retry cleanup"
                       : "Remove"}
