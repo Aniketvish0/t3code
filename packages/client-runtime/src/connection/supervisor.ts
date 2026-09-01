@@ -412,6 +412,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }).pipe(Effect.forkScoped);
   });
 
+  // A promoted direct route can pass preparation and still die while the
+  // socket opens, before readiness, or later in the session. The broker only
+  // learns about failures inside prepare, so the supervisor reports the rest:
+  // clear the override and start its cooldown so the next attempt falls back
+  // to the relay instead of re-selecting the same broken route.
+  const reportFailedPromotedRoute = Effect.fnUntraced(function* () {
+    if (Option.isNone(promotion) || target._tag !== "RelayConnectionTarget") {
+      return;
+    }
+    const attempted = yield* SubscriptionRef.get(prepared);
+    if (Option.isNone(attempted)) {
+      return;
+    }
+    const override = yield* promotion.value.overrideFor(target.environmentId);
+    if (Option.isSome(override) && override.value.httpBaseUrl === attempted.value.httpBaseUrl) {
+      yield* promotion.value.reportOverrideFailed(target.environmentId);
+    }
+  });
+
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
     for (;;) {
       const next = yield* Queue.take(signals);
@@ -581,6 +600,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
     if (establishment._tag === "TimedOut") {
+      yield* reportFailedPromotedRoute();
       return {
         _tag: "Failure",
         established: false,
@@ -595,6 +615,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
     if (Exit.isFailure(establishment.exit)) {
+      yield* reportFailedPromotedRoute();
       const isUnexpectedDefect =
         !Cause.hasInterruptsOnly(establishment.exit.cause) &&
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
@@ -666,6 +687,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         resetRetry: connectedExit.value,
       } satisfies AttemptOutcome;
     }
+    yield* reportFailedPromotedRoute();
     return failureFromExit(target, connectedExit, true, connectedForMs >= BACKOFF_RESET_AFTER_MS);
   }, Effect.ensuring(clearLease));
 

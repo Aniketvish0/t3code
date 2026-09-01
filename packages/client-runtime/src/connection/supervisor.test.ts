@@ -119,6 +119,8 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly discover?: (
     prepared: PreparedConnection,
   ) => Effect.Effect<Option.Option<ConnectionPromotion.PromotedRoute>>;
+  readonly overrideFor?: () => Effect.Effect<Option.Option<ConnectionPromotion.PromotedRoute>>;
+  readonly reportOverrideFailed?: () => Effect.Effect<void>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -202,8 +204,8 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
           Layer.succeed(
             ConnectionPromotion.ConnectionPromotion,
             ConnectionPromotion.ConnectionPromotion.of({
-              overrideFor: () => Effect.succeed(Option.none()),
-              reportOverrideFailed: () => Effect.void,
+              overrideFor: options?.overrideFor ?? (() => Effect.succeed(Option.none())),
+              reportOverrideFailed: options?.reportOverrideFailed ?? (() => Effect.void),
               discover,
             }),
           ),
@@ -914,6 +916,60 @@ describe("EnvironmentSupervisor", () => {
       const prepared = yield* SubscriptionRef.get(supervisor.prepared);
       expect(Option.getOrThrow(prepared).httpBaseUrl).toBe("http://192.168.1.20:3773/");
     }),
+  );
+
+  it.effect("reports a promoted route that fails after preparation so retries fall back", () =>
+    Effect.gen(function* () {
+      const directRoute: ConnectionPromotion.PromotedRoute = {
+        endpointId: "server-lan:http://192.168.1.20:3773",
+        httpBaseUrl: "http://192.168.1.20:3773/",
+        wsBaseUrl: "ws://192.168.1.20:3773/",
+      };
+      const relayPrepared: PreparedConnection = {
+        environmentId: RELAY_TARGET.environmentId,
+        label: RELAY_TARGET.label,
+        httpBaseUrl: "https://tunnel.example.test",
+        socketUrl: "wss://tunnel.example.test/ws?wsTicket=dpop",
+        httpAuthorization: { _tag: "Dpop", accessToken: "dpop-access-token" },
+        target: RELAY_TARGET,
+      };
+      const directPrepared: PreparedConnection = {
+        ...relayPrepared,
+        httpBaseUrl: directRoute.httpBaseUrl,
+        socketUrl: "ws://192.168.1.20:3773/ws?wsTicket=direct",
+      };
+      const override = yield* Ref.make<Option.Option<ConnectionPromotion.PromotedRoute>>(
+        Option.some(directRoute),
+      );
+      const failureReports = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        // The override is installed up front, so the first attempt prepares
+        // the direct route; once the override is cleared the retry relays.
+        prepare: () =>
+          Ref.get(override).pipe(
+            Effect.map((current) => (Option.isSome(current) ? directPrepared : relayPrepared)),
+          ),
+        // The direct socket opens but never becomes ready.
+        ready: (attempt) =>
+          attempt === 1 ? Effect.fail(transient("direct socket closed before ready")) : Effect.void,
+        discover: () => Effect.succeed(Option.none()),
+        overrideFor: () => Ref.get(override),
+        reportOverrideFailed: () =>
+          Ref.set(override, Option.none()).pipe(
+            Effect.andThen(Ref.update(failureReports, (count) => count + 1)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      expect(yield* Ref.get(failureReports)).toBe(1);
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+      expect(Option.getOrThrow(prepared).httpBaseUrl).toBe("https://tunnel.example.test");
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not run direct-route discovery for non-relay targets", () =>
