@@ -91,9 +91,21 @@ interface TurnAnalyticsMetadata {
   readonly runtimeMode?: string;
 }
 
+interface ActiveTurnAnalytics {
+  readonly metadata: TurnAnalyticsMetadata;
+  readonly requestAssociated: boolean;
+}
+
+interface DeferredTurnAnalyticsCompletion {
+  readonly completionKey: string;
+  readonly completedAtMs: number;
+  readonly terminalProperties: Readonly<Record<string, unknown>>;
+}
+
 interface TurnAnalyticsSessionState {
   readonly pendingByRequestId: Map<number, TurnAnalyticsMetadata>;
-  readonly activeByTurnId: Map<string, TurnAnalyticsMetadata>;
+  readonly activeByTurnId: Map<string, ActiveTurnAnalytics>;
+  readonly deferredCompletionsByTurnId: Map<string, DeferredTurnAnalyticsCompletion>;
 }
 
 interface TurnAnalyticsState {
@@ -108,9 +120,9 @@ const MAX_ACTIVE_TURN_ANALYTICS_PER_SESSION = 8;
 function setActiveTurnAnalytics(
   session: TurnAnalyticsSessionState,
   turnId: string,
-  metadata: TurnAnalyticsMetadata,
+  active: ActiveTurnAnalytics,
 ): void {
-  session.activeByTurnId.set(turnId, metadata);
+  session.activeByTurnId.set(turnId, active);
   while (session.activeByTurnId.size > MAX_ACTIVE_TURN_ANALYTICS_PER_SESSION) {
     const oldestTurnId = session.activeByTurnId.keys().next().value;
     if (oldestTurnId === undefined) return;
@@ -298,10 +310,71 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   let turnAnalyticsRequestId = 0;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+  const finishTurnAnalytics = (
+    state: TurnAnalyticsState,
+    input: {
+      readonly sessionKey: string;
+      readonly turnId: string;
+      readonly completion: DeferredTurnAnalyticsCompletion;
+    },
+  ): Readonly<Record<string, unknown>> | undefined => {
+    if (state.completedKeys.has(input.completion.completionKey)) return undefined;
+    state.completedKeys.add(input.completion.completionKey);
+    state.completedOrder.push(input.completion.completionKey);
+    while (state.completedOrder.length > MAX_COMPLETED_TURN_ANALYTICS_KEYS) {
+      const expired = state.completedOrder.shift();
+      if (expired) state.completedKeys.delete(expired);
+    }
+
+    const session = state.sessions.get(input.sessionKey);
+    const metadata = session?.activeByTurnId.get(input.turnId)?.metadata;
+    session?.activeByTurnId.delete(input.turnId);
+    session?.deferredCompletionsByTurnId.delete(input.turnId);
+    if (
+      session &&
+      session.activeByTurnId.size === 0 &&
+      session.pendingByRequestId.size === 0 &&
+      session.deferredCompletionsByTurnId.size === 0
+    ) {
+      state.sessions.delete(input.sessionKey);
+    }
+
+    return {
+      ...input.completion.terminalProperties,
+      ...(metadata?.model ? { model: metadata.model } : {}),
+      ...(metadata?.effort ? { effort: metadata.effort } : {}),
+      ...(metadata?.interactionMode ? { interactionMode: metadata.interactionMode } : {}),
+      ...(metadata?.runtimeMode ? { runtimeMode: metadata.runtimeMode } : {}),
+      ...(metadata ? { mixedModels: metadata.mixedModels } : {}),
+      ...(metadata
+        ? { durationMs: Math.max(0, input.completion.completedAtMs - metadata.startedAtMs) }
+        : {}),
+    };
+  };
+
+  const recordCompletedTurnProperties = (
+    properties: ReadonlyArray<Readonly<Record<string, unknown>>>,
+  ) =>
+    Effect.forEach(properties, (entry) => analytics.record("provider.turn.completed", entry), {
+      discard: true,
+    });
+
   const clearTurnAnalyticsSession = (providerInstanceId: ProviderInstanceId, threadId: ThreadId) =>
-    Ref.update(turnAnalytics, (state) => {
-      state.sessions.delete(turnAnalyticsSessionKey(providerInstanceId, threadId));
-      return state;
+    Effect.gen(function* () {
+      const properties = yield* Ref.modify(turnAnalytics, (state) => {
+        const sessionKey = turnAnalyticsSessionKey(providerInstanceId, threadId);
+        const session = state.sessions.get(sessionKey);
+        const completed: Array<Readonly<Record<string, unknown>>> = [];
+        if (session) {
+          for (const [turnId, completion] of session.deferredCompletionsByTurnId) {
+            const entry = finishTurnAnalytics(state, { sessionKey, turnId, completion });
+            if (entry) completed.push(entry);
+          }
+        }
+        state.sessions.delete(sessionKey);
+        return [completed, state] as const;
+      });
+      yield* recordCompletedTurnProperties(properties);
     });
 
   const beginTurnAnalytics = Effect.fn("beginTurnAnalytics")(function* (input: {
@@ -321,6 +394,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const session = state.sessions.get(key) ?? {
         pendingByRequestId: new Map(),
         activeByTurnId: new Map(),
+        deferredCompletionsByTurnId: new Map(),
       };
       const metadata: TurnAnalyticsMetadata = {
         provider: input.provider,
@@ -343,16 +417,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly requestId: number;
   }) =>
-    Ref.update(turnAnalytics, (state) => {
-      const sessionKey = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
-      const session = state.sessions.get(sessionKey);
-      if (session) {
+    Effect.gen(function* () {
+      const properties = yield* Ref.modify(turnAnalytics, (state) => {
+        const sessionKey = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
+        const session = state.sessions.get(sessionKey);
+        if (!session)
+          return [[] as ReadonlyArray<Readonly<Record<string, unknown>>>, state] as const;
         session.pendingByRequestId.delete(input.requestId);
-        if (session.activeByTurnId.size === 0 && session.pendingByRequestId.size === 0) {
+        const completed: Array<Readonly<Record<string, unknown>>> = [];
+        if (session.pendingByRequestId.size === 0) {
+          for (const [turnId, completion] of session.deferredCompletionsByTurnId) {
+            const entry = finishTurnAnalytics(state, { sessionKey, turnId, completion });
+            if (entry) completed.push(entry);
+          }
+        }
+        if (
+          session.activeByTurnId.size === 0 &&
+          session.pendingByRequestId.size === 0 &&
+          session.deferredCompletionsByTurnId.size === 0
+        ) {
           state.sessions.delete(sessionKey);
         }
-      }
-      return state;
+        return [completed, state] as const;
+      });
+      yield* recordCompletedTurnProperties(properties);
     });
 
   const associateTurnAnalytics = (input: {
@@ -361,41 +449,70 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly turnId: string;
     readonly metadata: TurnAnalyticsMetadata;
   }) =>
-    Ref.update(turnAnalytics, (state) => {
-      const completionKey = turnAnalyticsCompletionKey(
-        input.providerInstanceId,
-        input.threadId,
-        input.turnId,
-      );
-      const sessionKey = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
-      const session = state.sessions.get(sessionKey);
-      if (!session || state.completedKeys.has(completionKey)) {
-        if (session) {
-          session.pendingByRequestId.delete(input.metadata.requestId);
-          if (session.activeByTurnId.size === 0 && session.pendingByRequestId.size === 0) {
-            state.sessions.delete(sessionKey);
+    Effect.gen(function* () {
+      const properties = yield* Ref.modify(turnAnalytics, (state) => {
+        const completionKey = turnAnalyticsCompletionKey(
+          input.providerInstanceId,
+          input.threadId,
+          input.turnId,
+        );
+        const sessionKey = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
+        const session = state.sessions.get(sessionKey);
+        if (!session || state.completedKeys.has(completionKey)) {
+          if (session) {
+            session.pendingByRequestId.delete(input.metadata.requestId);
+            if (
+              session.activeByTurnId.size === 0 &&
+              session.pendingByRequestId.size === 0 &&
+              session.deferredCompletionsByTurnId.size === 0
+            ) {
+              state.sessions.delete(sessionKey);
+            }
           }
+          return [[] as ReadonlyArray<Readonly<Record<string, unknown>>>, state] as const;
         }
-        return state;
-      }
-      const existing = session.activeByTurnId.get(input.turnId);
-      setActiveTurnAnalytics(session, input.turnId, {
-        ...(existing ?? input.metadata),
-        ...(existing?.model ? {} : input.metadata.model ? { model: input.metadata.model } : {}),
-        ...(existing?.effort ? {} : input.metadata.effort ? { effort: input.metadata.effort } : {}),
-        ...(existing?.interactionMode
-          ? {}
-          : input.metadata.interactionMode
-            ? { interactionMode: input.metadata.interactionMode }
-            : {}),
-        ...(existing?.runtimeMode
-          ? {}
-          : input.metadata.runtimeMode
-            ? { runtimeMode: input.metadata.runtimeMode }
-            : {}),
+        const existing = session.activeByTurnId.get(input.turnId);
+        const existingMetadata = existing?.metadata;
+        const base = existing?.requestAssociated ? existing.metadata : input.metadata;
+        setActiveTurnAnalytics(session, input.turnId, {
+          requestAssociated: true,
+          metadata: {
+            ...base,
+            ...(existingMetadata?.model
+              ? { model: existingMetadata.model }
+              : input.metadata.model
+                ? { model: input.metadata.model }
+                : {}),
+            ...(existingMetadata?.effort
+              ? { effort: existingMetadata.effort }
+              : input.metadata.effort
+                ? { effort: input.metadata.effort }
+                : {}),
+            ...(base?.interactionMode
+              ? {}
+              : input.metadata.interactionMode
+                ? { interactionMode: input.metadata.interactionMode }
+                : {}),
+            ...(base?.runtimeMode
+              ? {}
+              : input.metadata.runtimeMode
+                ? { runtimeMode: input.metadata.runtimeMode }
+                : {}),
+            mixedModels: existingMetadata?.mixedModels ?? input.metadata.mixedModels,
+          },
+        });
+        session.pendingByRequestId.delete(input.metadata.requestId);
+        const completion = session.deferredCompletionsByTurnId.get(input.turnId);
+        const completed = completion
+          ? finishTurnAnalytics(state, {
+              sessionKey,
+              turnId: input.turnId,
+              completion,
+            })
+          : undefined;
+        return [completed ? [completed] : [], state] as const;
       });
-      session.pendingByRequestId.delete(input.metadata.requestId);
-      return state;
+      yield* recordCompletedTurnProperties(properties);
     });
 
   const observeTurnStartedForAnalytics = Effect.fn("observeTurnStartedForAnalytics")(function* (
@@ -415,6 +532,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const session = state.sessions.get(sessionKey) ?? {
         pendingByRequestId: new Map(),
         activeByTurnId: new Map(),
+        deferredCompletionsByTurnId: new Map(),
       };
       const current = session.activeByTurnId.get(String(event.turnId));
       const solePending =
@@ -422,7 +540,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ? session.pendingByRequestId.values().next().value
           : undefined;
       const metadata: TurnAnalyticsMetadata = {
-        ...(current ??
+        ...(current?.metadata ??
           solePending ?? {
             requestId: ++turnAnalyticsRequestId,
             provider: source.provider,
@@ -432,7 +550,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(event.payload.model ? { model: event.payload.model } : {}),
         ...(event.payload.effort ? { effort: event.payload.effort } : {}),
       };
-      setActiveTurnAnalytics(session, String(event.turnId), metadata);
+      setActiveTurnAnalytics(session, String(event.turnId), {
+        metadata,
+        requestAssociated: current?.requestAssociated ?? solePending !== undefined,
+      });
       if (solePending?.requestId === metadata.requestId) {
         session.pendingByRequestId.delete(solePending.requestId);
       }
@@ -453,11 +574,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (event.turnId) {
         const current = session.activeByTurnId.get(String(event.turnId));
         if (current) {
-          session.activeByTurnId.set(String(event.turnId), { ...current, mixedModels: true });
+          session.activeByTurnId.set(String(event.turnId), {
+            ...current,
+            metadata: { ...current.metadata, mixedModels: true },
+          });
         }
       } else {
         for (const [turnId, current] of session.activeByTurnId) {
-          session.activeByTurnId.set(turnId, { ...current, mixedModels: true });
+          session.activeByTurnId.set(turnId, {
+            ...current,
+            metadata: { ...current.metadata, mixedModels: true },
+          });
         }
       }
       return state;
@@ -469,67 +596,74 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ) {
     if (!event.turnId) return;
     const completedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const tokenUsage = event.payload.tokenUsage;
+    const completion: DeferredTurnAnalyticsCompletion = {
+      completionKey: turnAnalyticsCompletionKey(
+        source.instanceId,
+        event.threadId,
+        String(event.turnId),
+      ),
+      completedAtMs,
+      terminalProperties: {
+        provider: source.provider,
+        terminalStatus:
+          event.type === "turn.completed"
+            ? event.payload.state
+            : event.payload.reason.toLowerCase().includes("interrupt")
+              ? "interrupted"
+              : "cancelled",
+        usageStatus: tokenUsage?.usageStatus ?? "unavailable",
+        usageScope: tokenUsage?.usageScope ?? "main_agent",
+        ...(tokenUsage ? { hasSubagents: tokenUsage.hasSubagents } : {}),
+        ...(tokenUsage?.inputTokens !== undefined ? { inputTokens: tokenUsage.inputTokens } : {}),
+        ...(tokenUsage?.cachedInputTokens !== undefined
+          ? { cachedInputTokens: tokenUsage.cachedInputTokens }
+          : {}),
+        ...(tokenUsage?.cacheCreationTokens !== undefined
+          ? { cacheCreationTokens: tokenUsage.cacheCreationTokens }
+          : {}),
+        ...(tokenUsage?.outputTokens !== undefined
+          ? { outputTokens: tokenUsage.outputTokens }
+          : {}),
+        ...(tokenUsage?.reasoningTokens !== undefined
+          ? { reasoningTokens: tokenUsage.reasoningTokens }
+          : {}),
+      },
+    };
     const properties = yield* Ref.modify(turnAnalytics, (state) => {
+      if (state.completedKeys.has(completion.completionKey)) {
+        return [[] as ReadonlyArray<Readonly<Record<string, unknown>>>, state] as const;
+      }
       const turnId = String(event.turnId);
-      const completionKey = turnAnalyticsCompletionKey(source.instanceId, event.threadId, turnId);
-      if (state.completedKeys.has(completionKey)) {
-        return [undefined, state] as const;
-      }
-      state.completedKeys.add(completionKey);
-      state.completedOrder.push(completionKey);
-      while (state.completedOrder.length > MAX_COMPLETED_TURN_ANALYTICS_KEYS) {
-        const expired = state.completedOrder.shift();
-        if (expired) state.completedKeys.delete(expired);
-      }
-
       const sessionKey = turnAnalyticsSessionKey(source.instanceId, event.threadId);
       const session = state.sessions.get(sessionKey);
-      const metadata = session?.activeByTurnId.get(turnId);
-      session?.activeByTurnId.delete(turnId);
-      if (session && session.activeByTurnId.size === 0 && session.pendingByRequestId.size === 0) {
-        state.sessions.delete(sessionKey);
+      if (session?.deferredCompletionsByTurnId.has(turnId)) {
+        return [[] as ReadonlyArray<Readonly<Record<string, unknown>>>, state] as const;
+      }
+      const active = session?.activeByTurnId.get(turnId);
+      const needsAssociation =
+        (session?.pendingByRequestId.size ?? 0) > 0 && active?.requestAssociated !== true;
+      if (!session || !needsAssociation) {
+        const completed = finishTurnAnalytics(state, { sessionKey, turnId, completion });
+        return [completed ? [completed] : [], state] as const;
       }
 
-      const tokenUsage = event.payload.tokenUsage;
-      const terminalStatus =
-        event.type === "turn.completed"
-          ? event.payload.state
-          : event.payload.reason.toLowerCase().includes("interrupt")
-            ? "interrupted"
-            : "cancelled";
-      return [
-        {
-          provider: source.provider,
-          ...(metadata?.model ? { model: metadata.model } : {}),
-          ...(metadata?.effort ? { effort: metadata.effort } : {}),
-          ...(metadata?.interactionMode ? { interactionMode: metadata.interactionMode } : {}),
-          ...(metadata?.runtimeMode ? { runtimeMode: metadata.runtimeMode } : {}),
-          ...(metadata ? { mixedModels: metadata.mixedModels } : {}),
-          ...(metadata ? { durationMs: Math.max(0, completedAtMs - metadata.startedAtMs) } : {}),
-          terminalStatus,
-          usageStatus: tokenUsage?.usageStatus ?? "unavailable",
-          usageScope: tokenUsage?.usageScope ?? "main_agent",
-          ...(tokenUsage ? { hasSubagents: tokenUsage.hasSubagents } : {}),
-          ...(tokenUsage?.inputTokens !== undefined ? { inputTokens: tokenUsage.inputTokens } : {}),
-          ...(tokenUsage?.cachedInputTokens !== undefined
-            ? { cachedInputTokens: tokenUsage.cachedInputTokens }
-            : {}),
-          ...(tokenUsage?.cacheCreationTokens !== undefined
-            ? { cacheCreationTokens: tokenUsage.cacheCreationTokens }
-            : {}),
-          ...(tokenUsage?.outputTokens !== undefined
-            ? { outputTokens: tokenUsage.outputTokens }
-            : {}),
-          ...(tokenUsage?.reasoningTokens !== undefined
-            ? { reasoningTokens: tokenUsage.reasoningTokens }
-            : {}),
-        },
-        state,
-      ] as const;
+      session.deferredCompletionsByTurnId.set(turnId, completion);
+      const completed: Array<Readonly<Record<string, unknown>>> = [];
+      while (session.deferredCompletionsByTurnId.size > MAX_ACTIVE_TURN_ANALYTICS_PER_SESSION) {
+        const oldest = session.deferredCompletionsByTurnId.entries().next().value;
+        if (!oldest) break;
+        const [oldestTurnId, oldestCompletion] = oldest;
+        const entry = finishTurnAnalytics(state, {
+          sessionKey,
+          turnId: oldestTurnId,
+          completion: oldestCompletion,
+        });
+        if (entry) completed.push(entry);
+      }
+      return [completed, state] as const;
     });
-    if (properties) {
-      yield* analytics.record("provider.turn.completed", properties);
-    }
+    yield* recordCompletedTurnProperties(properties);
   });
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
