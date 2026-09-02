@@ -5327,6 +5327,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
     return Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.started"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId: asThreadId("thread-custom-instance"),
@@ -5361,6 +5366,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         variant: "high",
         parts: [{ type: "text", text: "Fix it" }],
       });
+      const started = yield* Fiber.join(startedFiber);
+      NodeAssert.equal(started._tag, "Some");
+      if (started._tag === "Some" && started.value.type === "turn.started") {
+        NodeAssert.equal(started.value.payload.effort, undefined);
+      }
     }).pipe(Effect.provide(adapterLayer));
   });
 

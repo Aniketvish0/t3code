@@ -2895,7 +2895,6 @@ export function makeOpenCodeAdapter(
               type: "turn.started",
               payload: {
                 model: modelSelection?.model ?? context.session.model,
-                ...(variant ? { effort: variant } : {}),
               },
             });
           }

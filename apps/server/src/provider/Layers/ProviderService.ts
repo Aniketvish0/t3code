@@ -134,8 +134,7 @@ function turnAnalyticsCompletionKey(
 function turnEffort(modelSelection: ProviderSendTurnInput["modelSelection"]): string | undefined {
   return (
     getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
-    getModelSelectionStringOptionValue(modelSelection, "effort") ??
-    getModelSelectionStringOptionValue(modelSelection, "variant")
+    getModelSelectionStringOptionValue(modelSelection, "effort")
   );
 }
 

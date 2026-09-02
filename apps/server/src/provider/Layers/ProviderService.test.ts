@@ -2264,6 +2264,48 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
     }),
   );
 
+  it.effect("does not report a generic model variant as reasoning effort", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-generic-variant");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* provider.sendTurn({
+        threadId,
+        input: "use the provider preset",
+        attachments: [],
+        modelSelection: createModelSelection(codexInstanceId, "provider/model", [
+          { id: "variant", value: "high" },
+        ]),
+      });
+
+      const runtimeEvent = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      primaryAnalyticsCodex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-turn-analytics-generic-variant"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: turn.turnId,
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(runtimeEvent);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 1);
+      assert.notProperty(completed[0]?.properties ?? {}, "effort");
+    }),
+  );
+
   it.effect("keeps the first metadata when steering reuses a rerouted turn", () =>
     Effect.gen(function* () {
       recordedTurnAnalytics.reset();
