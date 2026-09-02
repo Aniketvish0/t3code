@@ -77,7 +77,9 @@ export function useAccountEnvironmentActions() {
   const confirm = async () => {
     if (!selection || selection.accountId !== accountId || !selected) return;
     const removed = await removal.removeEnvironment(selected);
-    if (!removed || !selection.connectedOnDevice) return;
+    // A cleanup retry means the account already dropped this environment
+    // earlier. Leave the device entry alone; only a fresh removal forgets it.
+    if (!removed || !selection.connectedOnDevice || selected.cleanupPending) return;
     // The relay link is gone, so the saved T3 Connect connection on this
     // device can only fail. Drop it instead of leaving a dead row.
     const forgotten = await forgetOnDevice(selected.environmentId);
@@ -177,9 +179,14 @@ export function useAccountEnvironmentActions() {
     </AlertDialog>
   );
 
+  /** True when the account already removed this environment but its tunnel cleanup is pending. */
+  const isCleanupPending = (environmentId: EnvironmentId) =>
+    byId.get(environmentId)?.cleanupPending === true;
+
   return {
     accountId,
     cleanupPendingEnvironments,
+    isCleanupPending,
     error: environmentsState.error,
     refresh: environmentsState.refresh,
     menuFor,

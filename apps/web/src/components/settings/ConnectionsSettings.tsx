@@ -1361,6 +1361,8 @@ type SavedBackendListRowProps = {
   onRemove: (environmentId: EnvironmentId) => void;
   /** Account-level menu for T3 Connect environments. Null when there is none. */
   accountMenu: ReactNode;
+  /** True when the account already removed this environment and tunnel cleanup is pending. */
+  cleanupPending: boolean;
 };
 
 /**
@@ -1375,6 +1377,7 @@ function SavedBackendListRow({
   onConnect,
   onRemove,
   accountMenu,
+  cleanupPending,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
@@ -1428,6 +1431,7 @@ function SavedBackendListRow({
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
     environment.relayManaged ? "T3 Connect" : null,
+    cleanupPending ? "Removed from account · Cleanup pending" : null,
     environment.connection.error ? null : connectionStatusText(environment.connection),
   ].filter((value): value is string => value !== null);
 
@@ -1454,7 +1458,9 @@ function SavedBackendListRow({
             <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
           </div>
           {metadataBits.length > 0 ? (
-            <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
+            <p className={cn("text-xs", cleanupPending ? "text-warning" : "text-muted-foreground")}>
+              {metadataBits.join(" · ")}
+            </p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
@@ -3506,6 +3512,7 @@ export function ConnectionsSettings() {
                 ? accountActions.menuFor(environment.environmentId, { connectedOnDevice: true })
                 : null
             }
+            cleanupPending={accountActions.isCleanupPending(environment.environmentId)}
           />
         ))}
         <CloudRemoteEnvironmentRows

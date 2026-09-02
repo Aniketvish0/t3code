@@ -179,33 +179,37 @@ function CloudEnvironmentRowsContent(
 
       {hasCloudRows ? (
         <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-          {props.connectedCloudEnvironments.map((environment, index) => (
-            <ConnectedCloudEnvironmentRow
-              key={environment.environmentId}
-              environment={environment}
-              borderTop={index !== 0}
-              onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
-              onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
-              errorExpanded={expandedErrorId === environment.environmentId}
-              onToggleError={() => handleToggleCloudError(environment.environmentId)}
-              trailing={
-                accountActions.accountId ? (
-                  <AccountActionsMenu
-                    action="remove"
-                    disabled={accountActions.removingEnvironmentId !== null}
-                    label={environment.environmentLabel}
-                    onSelect={() =>
-                      accountActions.confirm("remove", {
-                        environmentId: environment.environmentId,
-                        label: environment.environmentLabel,
-                        connectedOnDevice: true,
-                      })
-                    }
-                  />
-                ) : null
-              }
-            />
-          ))}
+          {props.connectedCloudEnvironments.map((environment, index) => {
+            const cleanupPending = accountActions.isCleanupPending(environment.environmentId);
+            return (
+              <ConnectedCloudEnvironmentRow
+                key={environment.environmentId}
+                environment={environment}
+                borderTop={index !== 0}
+                cleanupPending={cleanupPending}
+                onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
+                onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
+                errorExpanded={expandedErrorId === environment.environmentId}
+                onToggleError={() => handleToggleCloudError(environment.environmentId)}
+                trailing={
+                  accountActions.accountId ? (
+                    <AccountActionsMenu
+                      action={cleanupPending ? "cleanup" : "remove"}
+                      disabled={accountActions.removingEnvironmentId !== null}
+                      label={environment.environmentLabel}
+                      onSelect={() =>
+                        accountActions.confirm(cleanupPending ? "cleanup" : "remove", {
+                          environmentId: environment.environmentId,
+                          label: environment.environmentLabel,
+                          connectedOnDevice: true,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+              />
+            );
+          })}
           {availableCloudEnvironments.map((environment, index) => (
             <CloudEnvironmentRow
               key={environment.environment.environmentId}
@@ -343,6 +347,15 @@ function useAccountEnvironmentRemoval(input: {
         : [],
     [accountId, accountEnvironments.data],
   );
+  const cleanupPendingIds = useMemo(
+    () => new Set(cleanupPendingEnvironments.map((environment) => environment.environmentId)),
+    [cleanupPendingEnvironments],
+  );
+  /** True when the account already removed this environment but tunnel cleanup is pending. */
+  const isCleanupPending = useCallback(
+    (environmentId: EnvironmentId) => cleanupPendingIds.has(environmentId),
+    [cleanupPendingIds],
+  );
 
   const inputRef = useRef(input);
   inputRef.current = input;
@@ -375,7 +388,9 @@ function useAccountEnvironmentRemoval(input: {
       if (result._tag === "Success") {
         refreshAccountEnvironments();
         inputRef.current.refreshDiscovery();
-        if (target.connectedOnDevice) {
+        // A cleanup retry means the account already dropped this environment
+        // earlier. Leave the phone's entry alone; only a fresh removal forgets it.
+        if (target.connectedOnDevice && mode === "remove") {
           inputRef.current.removeConnectedEnvironment(target.environmentId);
         }
         if (result.value.cleanupPending) {
@@ -425,7 +440,13 @@ function useAccountEnvironmentRemoval(input: {
     [run],
   );
 
-  return { accountId, cleanupPendingEnvironments, confirm, removingEnvironmentId };
+  return {
+    accountId,
+    cleanupPendingEnvironments,
+    confirm,
+    isCleanupPending,
+    removingEnvironmentId,
+  };
 }
 
 const REMOVE_FROM_ACCOUNT_ACTIONS = [
@@ -477,6 +498,7 @@ function AccountActionsMenu(props: {
 function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly borderTop: boolean;
+  readonly cleanupPending: boolean;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
   readonly onDisconnect: () => void;
@@ -499,6 +521,7 @@ function ConnectedCloudEnvironmentRow(props: {
         props.onDisconnect();
       }}
       onToggleError={props.onToggleError}
+      {...(props.cleanupPending ? { statusText: "Removed from account · Cleanup pending" } : {})}
       trailing={props.trailing}
       value={props.environment.connectionState !== "available"}
     />
