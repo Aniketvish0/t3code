@@ -57,7 +57,7 @@ vi.mock("./managedRelayState", () => ({
   useManagedRelayEnvironments: () => testState.environmentsState,
 }));
 
-import { appAtomRegistry, resetAppAtomRegistryForTests } from "../rpc/atomRegistry";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useManagedRelayEnvironmentRemoval } from "./useManagedRelayEnvironmentRemoval";
 
 const environment = {
@@ -97,10 +97,9 @@ function renderRemovalHook() {
 }
 
 describe("managed relay environment removal", () => {
-  afterEach(resetAppAtomRegistryForTests);
+  afterEach(() => setSession(null));
 
   beforeEach(() => {
-    resetAppAtomRegistryForTests();
     hooks.reset();
     testState.environmentsState.accountId = "account-1";
     testState.environmentsState.refresh.mockReset();
