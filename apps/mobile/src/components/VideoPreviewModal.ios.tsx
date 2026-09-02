@@ -5,10 +5,10 @@ import { useEffect, useEffectEvent, useId, useState } from "react";
 import { Alert, Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { mediaVideoPreviewUri } from "../lib/videoPreviewSource";
 import { useAssetUrlState } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
-import type { AttachmentVideoPreviewSource, VideoPreviewSource } from "../lib/videoPreviewSource";
-import { MediaVideoPreviewModal } from "./MediaVideoPreviewModal";
+import type { VideoPreviewSource } from "../lib/videoPreviewSource";
 
 export type { VideoPreviewSource } from "../lib/videoPreviewSource";
 
@@ -23,27 +23,43 @@ const NativeControls = requireNativeModule<{
 }>("T3NativeControls");
 
 function NativeVideoPreview(props: {
-  readonly source: AttachmentVideoPreviewSource;
+  readonly source: VideoPreviewSource;
   readonly onRequestClose: () => void;
 }) {
   const { source } = props;
-  const { attachment } = source;
   const identifier = useId();
   const onRequestClose = useEffectEvent(props.onRequestClose);
-  const environmentId = source.type === "remote" ? source.environmentId : null;
-  const preparedConnection = usePreparedConnection(environmentId);
-  const mimeType = videoMimeType(attachment) ?? attachment.mimeType;
-  const assetUrl = useAssetUrlState(
-    environmentId,
+  const environmentId =
     source.type === "remote"
-      ? { _tag: "attachment", attachmentId: attachment.id, fileName: attachment.name, mimeType }
-      : null,
-  );
+      ? source.environmentId
+      : source.type === "media" && "environmentId" in source
+        ? source.environmentId
+        : null;
+  const preparedConnection = usePreparedConnection(environmentId);
+  const name = source.type === "media" ? source.name : source.attachment.name;
+  const resource =
+    source.type === "remote"
+      ? {
+          _tag: "attachment" as const,
+          attachmentId: source.attachment.id,
+          fileName: source.attachment.name,
+          mimeType: videoMimeType(source.attachment) ?? source.attachment.mimeType,
+        }
+      : source.type === "media" && "resource" in source
+        ? source.resource
+        : null;
+  const assetUrl = useAssetUrlState(environmentId, resource);
+  const resolvedAssetUrl =
+    assetUrl._tag === "Success"
+      ? source.type === "media"
+        ? mediaVideoPreviewUri(source, assetUrl.url)
+        : assetUrl.url
+      : null;
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(() =>
-    assetUrl._tag === "Success" ? assetUrl.url : null,
+    source.type === "media" && "uri" in source ? source.uri : resolvedAssetUrl,
   );
   const loadError =
-    source.type === "remote" && playbackUrl === null
+    resource !== null && playbackUrl === null
       ? preparedConnection._tag === "None"
         ? "Reconnect to this environment and open the video again."
         : assetUrl._tag === "Failure"
@@ -53,8 +69,8 @@ function NativeVideoPreview(props: {
 
   useEffect(() => Keyboard.dismiss(), []);
   useEffect(() => {
-    if (playbackUrl === null && assetUrl._tag === "Success") setPlaybackUrl(assetUrl.url);
-  }, [playbackUrl, assetUrl]);
+    if (playbackUrl === null && resolvedAssetUrl !== null) setPlaybackUrl(resolvedAssetUrl);
+  }, [playbackUrl, resolvedAssetUrl]);
   useEffect(() => {
     if (!loadError) return;
     Alert.alert("Could not open video", loadError);
@@ -62,7 +78,7 @@ function NativeVideoPreview(props: {
   }, [loadError]);
 
   useEffect(() => {
-    if (source.type === "remote" && playbackUrl === null) return;
+    if (source.type !== "local" && playbackUrl === null) return;
     const controller = new AbortController();
     let ready = false;
     void (async () => {
@@ -76,7 +92,7 @@ function NativeVideoPreview(props: {
         ready = true;
         await NativeControls.presentVideo(
           file?.uri ?? playbackUrl!,
-          attachment.name,
+          name,
           source.sourceIdentifier ?? "",
           identifier,
         );
@@ -90,7 +106,9 @@ function NativeVideoPreview(props: {
       Alert.alert(
         "Could not open video",
         ready
-          ? "This video couldn't be loaded or played. Check the connection, or touch and hold the attachment to save or share the original."
+          ? source.type === "media"
+            ? "This video couldn't be loaded or played. Check the connection and try again."
+            : "This video couldn't be loaded or played. Check the connection, or touch and hold the attachment to save or share the original."
           : error instanceof Error
             ? error.message
             : "Could not load this video.",
@@ -101,7 +119,7 @@ function NativeVideoPreview(props: {
       controller.abort();
       void NativeControls.dismissVideo(identifier).catch(() => undefined);
     };
-  }, [source, attachment.name, playbackUrl, identifier]);
+  }, [source, name, playbackUrl, identifier]);
 
   return null;
 }
@@ -118,8 +136,5 @@ export function VideoPreviewModal(props: {
   }, [isFocused, hasSource]);
 
   if (!props.source || !isFocused) return null;
-  if (props.source.type === "media") {
-    return <MediaVideoPreviewModal source={props.source} onRequestClose={props.onRequestClose} />;
-  }
   return <NativeVideoPreview source={props.source} onRequestClose={props.onRequestClose} />;
 }

@@ -2,7 +2,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
 import { mediaMimeType, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import {
@@ -14,6 +14,15 @@ import {
 import type { FilePreviewSource } from "../components/FilePreviewModal";
 import type { MediaVideoPreviewSource } from "./videoPreviewSource";
 import type { MediaActionsSource } from "./mediaActions";
+
+type MediaTargetResource = Extract<AssetResource, { readonly _tag: "media-file" }>;
+type MediaTarget =
+  | { readonly uri: string }
+  | {
+      readonly environmentId: EnvironmentId;
+      readonly resource: MediaTargetResource;
+      readonly srcFragment?: string;
+    };
 
 /** Resolves only explicit media references. Ordinary links keep their existing navigation. */
 export function resolveMarkdownMediaPreview(
@@ -54,29 +63,27 @@ export function resolveMarkdownMediaPreview(
   const name =
     (reference && mediaReferenceFileName(reference)) || (kind === "video" ? "Video" : "Image");
   const srcFragment = markdownImageSourceFragment(href);
-  const target =
-    classified._tag === "Direct"
-      ? { uri: normalizeNativeMarkdownUrl(classified.uri) }
-      : {
-          environmentId: input.environmentId,
-          resource: {
-            _tag: "media-file" as const,
-            threadId: input.threadId,
-            path,
-          },
-          ...(srcFragment ? { srcFragment } : {}),
-        };
-  const actionsSource: MediaActionsSource =
-    classified._tag === "Direct"
-      ? { reference, uri: classified.uri, name, mimeType }
-      : {
-          reference,
-          environmentId: input.environmentId,
-          threadId: input.threadId,
-          resource: { _tag: "media-file", threadId: input.threadId, path },
-          name,
-          mimeType,
-        };
+  let target: MediaTarget;
+  let actionsSource: MediaActionsSource;
+  if (classified._tag === "Direct") {
+    target = { uri: normalizeNativeMarkdownUrl(classified.uri) };
+    actionsSource = { reference, uri: classified.uri, name, mimeType };
+  } else {
+    const resource: MediaTargetResource = { _tag: "media-file", threadId: input.threadId, path };
+    target = {
+      environmentId: input.environmentId,
+      resource,
+      ...(srcFragment ? { srcFragment } : {}),
+    };
+    actionsSource = {
+      reference,
+      environmentId: input.environmentId,
+      threadId: input.threadId,
+      resource,
+      name,
+      mimeType,
+    };
+  }
   return kind === "video"
     ? {
         kind,

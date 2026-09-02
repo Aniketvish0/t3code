@@ -350,15 +350,15 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
 }
 
 export interface ViewedImageAsset {
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
+  readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
   readonly alt: string;
   readonly srcFragment: string;
 }
 
-const ABSOLUTE_IMAGE_SOURCE_PATTERN = /^(?:file:|[\\/]|[a-z]:[\\/])/i;
-const T3_ATTACHMENT_IMAGE_PATH_PATTERN =
-  /(?:^|[\\/])(?:dev|userdata)[\\/]attachments[\\/]([a-z0-9_-]{1,128})\.[a-z0-9]{1,10}$/i;
-
+/**
+ * Host paths, including T3's own attachment files, are served in place through
+ * the media-file route, so the client never needs to recognize attachment ids.
+ */
 export function resolveViewedImageAsset(
   source: string,
   input: {
@@ -373,14 +373,8 @@ export function resolveViewedImageAsset(
     input.workspaceRoot == null && imageSource.path.startsWith("./")
       ? imageSource.path.slice(2)
       : imageSource.path;
-  const attachmentId = ABSOLUTE_IMAGE_SOURCE_PATTERN.test(source)
-    ? (T3_ATTACHMENT_IMAGE_PATH_PATTERN.exec(path)?.[1] ?? null)
-    : null;
-
   return {
-    resource: attachmentId
-      ? { _tag: "attachment", attachmentId }
-      : { _tag: "media-file", threadId: input.threadId, path },
+    resource: { _tag: "media-file", threadId: input.threadId, path },
     alt: path.split(/[\\/]/).at(-1) ?? "image",
     srcFragment: markdownImageSourceFragment(source),
   };
