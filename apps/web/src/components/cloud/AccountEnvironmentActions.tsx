@@ -1,3 +1,7 @@
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { EllipsisIcon } from "lucide-react";
@@ -6,6 +10,7 @@ import { useMemo, useState } from "react";
 import { environmentCatalog } from "~/connection/catalog";
 import { useManagedRelayEnvironmentRemoval } from "~/cloud/useManagedRelayEnvironmentRemoval";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import {
   AlertDialog,
@@ -18,6 +23,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { toastManager } from "../ui/toast";
 
 interface DialogSelection {
   readonly accountId: string;
@@ -71,10 +77,17 @@ export function useAccountEnvironmentActions() {
   const confirm = async () => {
     if (!selection || selection.accountId !== accountId || !selected) return;
     const removed = await removal.removeEnvironment(selected);
-    if (removed && selection.connectedOnDevice) {
-      // The relay link is gone, so the saved T3 Connect connection on this
-      // device can only fail. Drop it instead of leaving a dead row.
-      void forgetOnDevice(selected.environmentId);
+    if (!removed || !selection.connectedOnDevice) return;
+    // The relay link is gone, so the saved T3 Connect connection on this
+    // device can only fail. Drop it instead of leaving a dead row.
+    const forgotten = await forgetOnDevice(selected.environmentId);
+    if (forgotten._tag === "Failure" && !isAtomCommandInterrupted(forgotten)) {
+      const cause = squashAtomCommandFailure(forgotten);
+      toastManager.add({
+        type: "error",
+        title: "Removed from account, still saved on this device",
+        description: `${cause instanceof Error ? cause.message : "Could not forget the connection."} Use Remove on its row to retry.`,
+      });
     }
   };
 
@@ -190,7 +203,13 @@ export function CleanupPendingEnvironmentRow({
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{environment.label}</p>
+          <div className="flex items-center gap-2">
+            <ConnectionStatusDot
+              dotClassName="bg-muted-foreground/35"
+              tooltipText="Removed from account"
+            />
+            <p className="truncate text-sm font-medium">{environment.label}</p>
+          </div>
           <p className="mt-1 text-xs text-warning">Removed from account · Cleanup pending</p>
         </div>
         {menu}

@@ -1758,20 +1758,23 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  hasOtherRows,
   accountMenuFor,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  /** True when the section renders rows that are not saved or discovered. */
+  readonly hasOtherRows: boolean;
   readonly accountMenuFor: (environmentId: EnvironmentId) => ReactNode;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}
-      empty={<EmptyRemoteEnvironments />}
+      empty={hasOtherRows ? null : <EmptyRemoteEnvironments />}
       trailingFor={accountMenuFor}
     />
-  ) : savedEnvironments.length === 0 ? (
+  ) : savedEnvironments.length === 0 && !hasOtherRows ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
@@ -1802,6 +1805,14 @@ export function ConnectionsSettings() {
         .toSorted((left, right) => left.label.localeCompare(right.label)),
     [environments],
   );
+  // An environment removed from the account on another device keeps its saved
+  // row here. That row already offers Retry cleanup, so skip the extra one.
+  const cleanupPendingEnvironments = useMemo(() => {
+    const savedIds = new Set(savedEnvironments.map((environment) => environment.environmentId));
+    return accountActions.cleanupPendingEnvironments.filter(
+      (environment) => !savedIds.has(environment.environmentId),
+    );
+  }, [accountActions.cleanupPendingEnvironments, savedEnvironments]);
   const savedDesktopSshEnvironmentsByAlias = useMemo(
     () =>
       savedEnvironments.reduce<Record<string, EnvironmentPresentation>>(
@@ -3500,11 +3511,12 @@ export function ConnectionsSettings() {
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
+          hasOtherRows={cleanupPendingEnvironments.length > 0}
           accountMenuFor={(environmentId) =>
             accountActions.menuFor(environmentId, { connectedOnDevice: false })
           }
         />
-        {accountActions.cleanupPendingEnvironments.map((environment) => (
+        {cleanupPendingEnvironments.map((environment) => (
           <CleanupPendingEnvironmentRow
             key={environment.environmentId}
             environment={environment}

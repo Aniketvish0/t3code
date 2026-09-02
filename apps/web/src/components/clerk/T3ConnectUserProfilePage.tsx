@@ -44,8 +44,8 @@ export function T3ConnectEnvironmentRow(props: {
             </h3>
             <p className="mt-1 text-xs leading-[1.125rem] text-muted-foreground">
               {environment.cleanupPending
-                ? "Removed from account - cleanup pending"
-                : `${linkedAtLabel(environment.linkedAt)} - ${endpointLabel(environment)}`}
+                ? "Removed from account · Cleanup pending"
+                : `${linkedAtLabel(environment.linkedAt)} · ${endpointLabel(environment)}`}
             </p>
           </div>
           <CollapsibleTrigger
@@ -73,7 +73,7 @@ export function T3ConnectEnvironmentRow(props: {
                 {environment.cleanupPending ? "Retry cleanup" : "Remove from T3 Connect"}
               </h4>
               <p className="mt-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-                "{environment.label}"{" "}
+                “{environment.label}”{" "}
                 {environment.cleanupPending
                   ? "is already removed."
                   : "will be removed from this account."}
