@@ -11,6 +11,7 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   type WorkLogPresentationEntry,
+  type WorkLogToolLifecycleStatus,
   workEntryViewedImagePath,
 } from "./presentation.js";
 
@@ -47,11 +48,11 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["declined", "Declined to click in the preview browser"],
     ["stopped", "Stopped clicking in the preview browser"],
     ["unknown", "Click in the preview browser"],
-  ])("describes the tool's own %s state", (toolLifecycleStatus, displayName) => {
+  ] as const)("describes the tool's own %s state", (toolLifecycleStatus, displayName) => {
     expect(
       resolveWorkEntryToolPresentation({
         label: "T3-code.preview_click",
-        toolLifecycleStatus,
+        toolLifecycleStatus: toolLifecycleStatus as WorkLogToolLifecycleStatus,
       }),
     ).toEqual({ displayName, icon: "browser" });
   });
@@ -137,14 +138,20 @@ describe("resolveWorkEntryToolPresentation", () => {
 });
 
 describe("browser group summaries", () => {
+  const summarizeGroupLabel = (entries: ReadonlyArray<WorkLogPresentationEntry>) =>
+    summarizeToolGroup(entries).summary;
   const browserEntry: WorkLogPresentationEntry = {
+    id: "browser",
+    createdAt: "2026-09-01T00:00:00Z",
     label: "MCP tool call",
     toolData: { server: "t3-code", tool: "preview_click" },
-    itemType: "mcp_tool_call",
+    itemType: "dynamic_tool",
     toolLifecycleStatus: "completed",
     tone: "tool",
   };
   const commandEntry: WorkLogPresentationEntry = {
+    id: "command",
+    createdAt: "2026-09-01T00:00:00Z",
     label: "Ran command",
     command: "/bin/bash -lc 'vp test run'",
     itemType: "command_execution",
@@ -157,7 +164,7 @@ describe("browser group summaries", () => {
       ...browserEntry,
       toolCallId: `browser-${index}`,
     }));
-    expect(summarizeToolGroup(entries)).toBe(
+    expect(summarizeGroupLabel(entries)).toBe(
       `Used browser ${count} ${count === 1 ? "time" : "times"}`,
     );
     expect(toolGroupSummaryKind(entries)).toBe("browser");
@@ -168,13 +175,13 @@ describe("browser group summaries", () => {
       ...Array.from({ length: 4 }, () => commandEntry),
       ...Array.from({ length: 15 }, () => browserEntry),
     ];
-    expect(summarizeToolGroup(entries)).toBe("Ran 4 commands and used browser 15 times");
+    expect(summarizeGroupLabel(entries)).toBe("Ran 4 commands and used browser 15 times");
     expect(toolGroupSummaryKind(entries)).toBe("mixed");
   });
 
   it("preserves first-seen action ordering alongside non-browser tools", () => {
     expect(
-      summarizeToolGroup([
+      summarizeGroupLabel([
         browserEntry,
         commandEntry,
         {
@@ -182,12 +189,12 @@ describe("browser group summaries", () => {
           toolData: { server: "t3-code", tool: "task_status" },
         },
       ]),
-    ).toBe("Used browser 1 time, ran 1 command, and used 1 tool");
+    ).toBe("Used browser 1 time, ran 1 command, and performed 1 other action");
   });
 
   it("recognizes Claude browser identity without treating script metadata as a shell command", () => {
     expect(
-      summarizeToolGroup([
+      summarizeGroupLabel([
         {
           ...browserEntry,
           command: "node inspect-page.js",
@@ -199,21 +206,27 @@ describe("browser group summaries", () => {
 
   it("keeps foreign tools and web searches out of the browser count", () => {
     expect(
-      summarizeToolGroup([
+      summarizeGroupLabel([
         browserEntry,
         {
           ...browserEntry,
           label: "preview_click",
           toolData: { server: "another-server", tool: "preview_click" },
         },
-        { label: "Search", tone: "tool", itemType: "web_search" },
+        {
+          id: "search",
+          createdAt: "2026-09-01T00:00:00Z",
+          label: "Search",
+          tone: "tool",
+          itemType: "web_search",
+        },
       ]),
-    ).toBe("Used browser 1 time, used 1 tool, and searched the web 1 time");
+    ).toBe("Used browser 1 time, searched the web 1 time, and performed 1 other action");
   });
 
   it("keeps browser screenshots in the browser count while preserving their image path", () => {
     const entry = { ...browserEntry, viewedImagePath: "/workspace/page.png" };
-    expect(summarizeToolGroup([entry])).toBe("Used browser 1 time");
+    expect(summarizeGroupLabel([entry])).toBe("Used browser 1 time");
     expect(workEntryViewedImagePath(entry)).toBe("/workspace/page.png");
   });
 });
@@ -324,7 +337,7 @@ describe("workEntryViewedImagePath", () => {
     expect(
       workEntryViewedImagePath({
         ...entry,
-        itemType: "dynamic_tool_call",
+        itemType: "dynamic_tool",
         detail: 'Read: {"file_path":"truncated..."}',
         viewedImagePath: " /workspace/reference image.webp ",
       }),
@@ -346,9 +359,11 @@ describe("toolGroupAction", () => {
   it("groups legacy Claude image reads with other reads", () => {
     expect(
       toolGroupAction({
+        id: "legacy-read",
+        createdAt: "2026-09-01T00:00:00Z",
         label: "Tool call",
         tone: "tool",
-        itemType: "dynamic_tool_call",
+        itemType: "dynamic_tool",
         viewedImagePath: "/workspace/reference.png",
       }),
     ).toBe("read");
