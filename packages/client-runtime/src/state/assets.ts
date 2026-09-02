@@ -1,9 +1,14 @@
-import { AssetResource, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  type AssetCreateUrlResult,
+  AssetResource,
+  EnvironmentId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { type AtomCommandResult, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
@@ -41,6 +46,50 @@ export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): strin
   } catch {
     return null;
   }
+}
+
+/** Stands in for a create-url query when there is nothing to mint for. */
+export const EMPTY_ASSET_URL_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
+  Atom.withLabel("asset-url:empty"),
+);
+
+export type AssetUrlState =
+  | { readonly _tag: "Loading" }
+  | { readonly _tag: "Failure" }
+  | {
+      readonly _tag: "Success";
+      readonly url: string;
+      /** The host path the server chose to serve, when it differs from what was asked for. */
+      readonly sourcePath?: string;
+    };
+
+/**
+ * Derives the client-facing URL state from a create-url query and the
+ * environment's HTTP origin. A missing origin is still loading rather than a
+ * failure, because it clears on reconnect without a new request.
+ */
+export function assetUrlStateFromResult(
+  result: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
+  httpBaseUrl: string | null,
+): AssetUrlState {
+  if (result._tag === "Failure") return { _tag: "Failure" };
+  if (httpBaseUrl === null || result._tag !== "Success") return { _tag: "Loading" };
+  const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+  if (url === null) return { _tag: "Failure" };
+  return {
+    _tag: "Success",
+    url,
+    ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
+  };
+}
+
+/** Resolves a minted result, or null when it failed or the server returned an unusable URL. */
+export function resolveAssetUrlResult(
+  result: AtomCommandResult<AssetCreateUrlResult, unknown>,
+  httpBaseUrl: string | null,
+): string | null {
+  const state = assetUrlStateFromResult(result, httpBaseUrl);
+  return state._tag === "Success" ? state.url : null;
 }
 
 export function createAssetEnvironmentAtoms<R, E>(

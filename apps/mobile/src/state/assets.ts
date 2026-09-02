@@ -1,23 +1,21 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createAssetEnvironmentAtoms, resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import {
+  type AssetUrlState,
+  assetUrlStateFromResult,
+  createAssetEnvironmentAtoms,
+  EMPTY_ASSET_URL_ATOM,
+  resolveAssetUrlResult,
+} from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { usePreparedConnection } from "./session";
 import { useAtomQueryRunner } from "./use-atom-query-runner";
 
+export type { AssetUrlState } from "@t3tools/client-runtime/state/assets";
+
 export const assetEnvironment = createAssetEnvironmentAtoms(connectionAtomRuntime);
-
-const EMPTY_ASSET_URL_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
-  Atom.withLabel("mobile-asset-url:empty"),
-);
-
-export type AssetUrlState =
-  | { readonly _tag: "Loading" }
-  | { readonly _tag: "Failure" }
-  | { readonly _tag: "Success"; readonly url: string };
 
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
@@ -29,14 +27,10 @@ export function useAssetUrlState(
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  if (result._tag === "Failure") {
-    return { _tag: "Failure" };
-  }
-  if (preparedConnection._tag === "None" || result._tag !== "Success") {
-    return { _tag: "Loading" };
-  }
-  const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
-  return url === null ? { _tag: "Failure" } : { _tag: "Success", url };
+  return assetUrlStateFromResult(
+    result,
+    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null,
+  );
 }
 
 export function useAssetUrl(
@@ -47,7 +41,11 @@ export function useAssetUrl(
   return state._tag === "Success" ? state.url : null;
 }
 
-/** Explicit playback and sharing must reauthorize files that may have been replaced on disk. */
+/**
+ * Explicit playback and sharing must reauthorize files that may have been
+ * replaced on disk. Returns null instead of throwing: native players and share
+ * sheets show their own unavailable state and have no retry affordance to explain to.
+ */
 export function useRefreshAssetUrl(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
@@ -60,9 +58,9 @@ export function useRefreshAssetUrl(
   });
   return useCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    const result = await createUrl({ environmentId, input: { resource } });
-    return result._tag === "Success"
-      ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl)
-      : null;
+    return resolveAssetUrlResult(
+      await createUrl({ environmentId, input: { resource } }),
+      httpBaseUrl,
+    );
   }, [createUrl, environmentId, httpBaseUrl, resource]);
 }
