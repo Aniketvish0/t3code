@@ -1970,7 +1970,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const assistantMessage = promiseWithResolvers<unknown>();
       const duplicateStep = promiseWithResolvers<unknown>();
       const secondStep = promiseWithResolvers<unknown>();
+      const unresolvedHeader = promiseWithResolvers<unknown>();
       const unresolvedStep = promiseWithResolvers<unknown>();
+      const recoveredStep = promiseWithResolvers<unknown>();
+      const recoveredIncompleteHeader = promiseWithResolvers<unknown>();
+      const recoveredCompleteHeader = promiseWithResolvers<unknown>();
       const childSession = promiseWithResolvers<unknown>();
       const idle = promiseWithResolvers<unknown>();
       runtimeMock.state.subscribedEvents = [
@@ -1979,7 +1983,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         assistantMessage.promise,
         duplicateStep.promise,
         secondStep.promise,
+        unresolvedHeader.promise,
         unresolvedStep.promise,
+        recoveredStep.promise,
+        recoveredIncompleteHeader.promise,
+        recoveredCompleteHeader.promise,
         childSession.promise,
         idle.promise,
       ];
@@ -2074,6 +2082,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           },
         },
       });
+      unresolvedHeader.resolve({
+        id: "evt-step-usage-unresolved-header",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "assistant-step-usage-without-parent",
+            role: "assistant",
+          },
+        },
+      });
       unresolvedStep.resolve({
         id: "evt-step-usage-unresolved",
         type: "message.part.updated",
@@ -2082,13 +2101,55 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           part: {
             ...stepPart,
             id: "step-usage-unresolved",
-            messageID: "assistant-step-usage-without-header",
+            messageID: "assistant-step-usage-without-parent",
             tokens: {
               input: 1_000,
               output: 1_000,
               reasoning: 0,
               cache: { read: 0, write: 0 },
             },
+          },
+        },
+      });
+      recoveredStep.resolve({
+        id: "evt-step-usage-recovered",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: {
+            ...stepPart,
+            id: "step-usage-recovered",
+            messageID: "assistant-step-usage-recovered",
+            tokens: {
+              input: 30,
+              output: 10,
+              reasoning: 2,
+              cache: { read: 5, write: 1 },
+            },
+          },
+        },
+      });
+      recoveredIncompleteHeader.resolve({
+        id: "evt-step-usage-recovered-incomplete-header",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "assistant-step-usage-recovered",
+            role: "assistant",
+            parentID: "",
+          },
+        },
+      });
+      recoveredCompleteHeader.resolve({
+        id: "evt-step-usage-recovered-complete-header",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "assistant-step-usage-recovered",
+            role: "assistant",
+            parentID: promptMessageId,
           },
         },
       });
@@ -2117,11 +2178,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         NodeAssert.deepStrictEqual(completed.value.payload.tokenUsage, {
           usageStatus: "partial",
           usageScope: "main_agent",
-          inputTokens: 210,
-          cachedInputTokens: 50,
-          cacheCreationTokens: 10,
-          outputTokens: 37,
-          reasoningTokens: 7,
+          inputTokens: 246,
+          cachedInputTokens: 55,
+          cacheCreationTokens: 11,
+          outputTokens: 49,
+          reasoningTokens: 9,
           hasSubagents: true,
         });
       }

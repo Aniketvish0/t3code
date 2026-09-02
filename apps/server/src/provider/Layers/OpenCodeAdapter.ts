@@ -372,8 +372,7 @@ interface OpenCodeSessionContext {
 interface OpenCodeTurnTokenUsageAccumulator {
   readonly partIds: Set<string>;
   readonly promptMessageIds: Set<string>;
-  readonly assistantMessageIds: Set<string>;
-  readonly resolvedAssistantMessageIds: Set<string>;
+  readonly assistantOwnershipByMessageId: Map<string, "owned" | "other" | "unknown">;
   readonly unresolvedStepPartIds: Set<string>;
   inputTokens: number;
   cachedInputTokens: number;
@@ -388,8 +387,7 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
   return {
     partIds: new Set(),
     promptMessageIds: new Set(),
-    assistantMessageIds: new Set(),
-    resolvedAssistantMessageIds: new Set(),
+    assistantOwnershipByMessageId: new Map(),
     unresolvedStepPartIds: new Set(),
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -2127,18 +2125,34 @@ export function makeOpenCodeAdapter(
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
             const usage = context.turnTokenUsage;
-            const ownsUsage = usage?.promptMessageIds.has(event.properties.info.parentID) ?? false;
+            const parentMessageId =
+              typeof event.properties.info.parentID === "string" &&
+              event.properties.info.parentID.trim().length > 0
+                ? event.properties.info.parentID
+                : undefined;
+            const observedOwnership =
+              parentMessageId === undefined
+                ? "unknown"
+                : usage?.promptMessageIds.has(parentMessageId)
+                  ? "owned"
+                  : "other";
+            const priorOwnership = usage?.assistantOwnershipByMessageId.get(
+              event.properties.info.id,
+            );
+            const ownership =
+              priorOwnership === undefined || priorOwnership === "unknown"
+                ? observedOwnership
+                : priorOwnership;
             if (usage) {
-              usage.resolvedAssistantMessageIds.add(event.properties.info.id);
-              if (ownsUsage) usage.assistantMessageIds.add(event.properties.info.id);
+              usage.assistantOwnershipByMessageId.set(event.properties.info.id, ownership);
             }
             for (const part of context.partById.values()) {
               if (part.messageID !== event.properties.info.id) {
                 continue;
               }
               if (usage && part.type === "step-finish") {
-                usage.unresolvedStepPartIds.delete(part.id);
-                if (ownsUsage) accumulateOpenCodeStepUsage(usage, part);
+                if (ownership !== "unknown") usage.unresolvedStepPartIds.delete(part.id);
+                if (ownership === "owned") accumulateOpenCodeStepUsage(usage, part);
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
@@ -2202,11 +2216,15 @@ export function makeOpenCodeAdapter(
           const messageRole = messageRoleForPart(context, part);
 
           if (turnId && part.type === "step-finish" && context.turnTokenUsage) {
-            if (context.turnTokenUsage.assistantMessageIds.has(part.messageID)) {
+            const ownership = context.turnTokenUsage.assistantOwnershipByMessageId.get(
+              part.messageID,
+            );
+            if (ownership === "owned") {
               accumulateOpenCodeStepUsage(context.turnTokenUsage, part);
             } else if (
-              !context.turnTokenUsage.resolvedAssistantMessageIds.has(part.messageID) &&
-              context.messageRoleById.get(part.messageID) !== "assistant"
+              ownership === "unknown" ||
+              (ownership === undefined &&
+                context.messageRoleById.get(part.messageID) !== "assistant")
             ) {
               context.turnTokenUsage.unresolvedStepPartIds.add(part.id);
             }
