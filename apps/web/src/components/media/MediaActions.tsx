@@ -36,6 +36,19 @@ export function shouldUseNativeImageContextMenu(source: MediaActionSource): bool
   );
 }
 
+export function handleNativeImageContextMenu(
+  source: MediaActionSource,
+  event: {
+    readonly defaultPrevented: boolean;
+    readonly preventDefault: () => void;
+    readonly stopPropagation: () => void;
+  },
+): boolean {
+  if (event.defaultPrevented || !shouldUseNativeImageContextMenu(source)) return false;
+  event.stopPropagation();
+  return true;
+}
+
 function mediaFileName(source: MediaActionSource): string {
   return (
     (source.reference && mediaReferenceFileName(source.reference)) || source.name || source.kind
@@ -170,6 +183,10 @@ export function MediaActions({
         render={children}
         tabIndex={0}
         onContextMenu={(event) => {
+          if (handleNativeImageContextMenu(source, event)) {
+            setTooltipOpen(false);
+            return;
+          }
           if (!hasActions || event.defaultPrevented) return;
           event.preventDefault();
           event.stopPropagation();

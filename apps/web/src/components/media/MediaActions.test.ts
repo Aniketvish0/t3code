@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { shouldUseNativeImageContextMenu, type MediaActionSource } from "./MediaActions";
+import {
+  handleNativeImageContextMenu,
+  shouldUseNativeImageContextMenu,
+  type MediaActionSource,
+} from "./MediaActions";
 
 const remoteImage: MediaActionSource = {
   kind: "image",
@@ -25,5 +29,20 @@ describe("shouldUseNativeImageContextMenu", () => {
 
   it("keeps videos on the custom source-aware menu", () => {
     expect(shouldUseNativeImageContextMenu({ ...remoteImage, kind: "video" })).toBe(false);
+  });
+
+  it("stops linked-image ancestors without preventing the native menu", () => {
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    expect(
+      handleNativeImageContextMenu(remoteImage, {
+        defaultPrevented: false,
+        preventDefault,
+        stopPropagation,
+      }),
+    ).toBe(true);
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });
