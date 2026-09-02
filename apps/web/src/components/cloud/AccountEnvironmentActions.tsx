@@ -163,7 +163,7 @@ export function useAccountEnvironmentActions() {
           </AlertDialogClose>
           <Button
             className="min-w-44"
-            variant="destructive"
+            variant={selected?.cleanupPending ? "default" : "destructive"}
             disabled={mutationPending || selected === null}
             aria-busy={mutationPending}
             onClick={() => void confirm()}

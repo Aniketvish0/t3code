@@ -59,7 +59,7 @@ export function T3ConnectEnvironmentRow(props: {
             render={
               <Button
                 size="sm"
-                variant="destructive-outline"
+                variant={environment.cleanupPending ? "outline" : "destructive-outline"}
                 className="text-[0.8125rem]"
                 disabled={props.mutationPending}
               >
@@ -102,7 +102,7 @@ export function T3ConnectEnvironmentRow(props: {
                 </Button>
                 <Button
                   size="sm"
-                  variant="destructive"
+                  variant={environment.cleanupPending ? "default" : "destructive"}
                   className="text-[0.8125rem]"
                   disabled={props.mutationPending}
                   onClick={() => props.onDeregister(environment)}
