@@ -231,6 +231,17 @@ works for a server that was wiped or is no longer reachable. Device-local connec
 controls remain in **Settings** → **Connections** on web and desktop or **Settings** →
 **Environments** on mobile.
 
+## Using the Desktop App as a Remote Only
+
+If a computer should only drive work running elsewhere, turn off its local environment. In the
+desktop app, open **Settings → Connections → This environment** and switch off **Local
+environment**. T3 Code restarts without a local server: no local agents or terminals run, WSL
+backends stay off, and other devices can no longer connect to this computer. Your projects,
+history, and saved connections are kept, and you keep working through pairing, T3 Connect, or SSH.
+
+Switch **Local environment** back on in the same place to restart with your previous local
+settings.
+
 ## Security Notes
 
 - Treat pairing URLs and pairing tokens like passwords.
