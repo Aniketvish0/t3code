@@ -77,8 +77,8 @@ export function useManagedRelayEnvironmentRemoval() {
         result.value.cleanupPending
           ? {
               type: "warning",
-              title: "Environment removed, cleanup pending",
-              description: "Removed from your account. Tunnel cleanup is pending.",
+              title: "Removed from account, cleanup pending",
+              description: `${environment.label} is removed from your account, but its tunnel was not deleted because the host was still running. Stop the host, then use Retry cleanup on its row.`,
             }
           : {
               type: "success",

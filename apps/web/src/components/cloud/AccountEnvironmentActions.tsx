@@ -148,7 +148,7 @@ export function useAccountEnvironmentActions() {
               ? `${selected.label} is already removed from your account, but its tunnel was not deleted because the host was still running. Stop the host, then retry.`
               : "This revokes the environment's T3 Connect link for every device on your account and stops activity publishing. Files, agents, and direct connections are not changed. Relink from the host to restore it."}
             {selection?.connectedOnDevice && !selected?.cleanupPending
-              ? " This client is connected to it through T3 Connect. That connection closes and the environment leaves this list."
+              ? " This device has it saved through T3 Connect. That saved connection is removed and the environment leaves this list."
               : null}
           </AlertDialogDescription>
         </AlertDialogHeader>
