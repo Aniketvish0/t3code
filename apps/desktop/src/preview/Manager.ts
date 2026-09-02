@@ -2765,6 +2765,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (restored) yield* reconcileViewportRollback(tabId, generation);
     }).pipe(Effect.ignore);
 
+  const currentViewportTarget = Effect.fnUntraced(function* (
+    tabId: string,
+    generation: number | undefined,
+  ) {
+    if (tabLifecycleGenerations.get(tabId) !== generation) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!current) return yield* new PreviewTabNotFoundError({ tabId });
+    if (current.webContentsId == null) {
+      return yield* new PreviewWebviewNotInitializedError({ tabId });
+    }
+    const currentWebContents = webContents.fromId(current.webContentsId);
+    if (!currentWebContents || currentWebContents.isDestroyed()) {
+      return yield* new PreviewWebContentsNotFoundError({
+        tabId,
+        webContentsId: current.webContentsId,
+      });
+    }
+    return {
+      intent: (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId),
+      wc: currentWebContents,
+    };
+  });
+
   const settleViewportIntent = Effect.fnUntraced(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -2773,36 +2798,32 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     applyInitial: (input: PreviewViewportOverride) => Effect.Effect<void, PreviewManagerError>,
   ) {
     const initialExit = yield* Effect.exit(applyInitial(intent.input));
-    if (Exit.isFailure(initialExit)) return yield* Effect.failCause(initialExit.cause);
-    const reconcileExit = yield* Effect.exit(
-      Effect.gen(function* () {
-        let applied = intent;
-        let appliedWebContents = wc;
-        while (true) {
-          const latest = (yield* SynchronizedRef.get(viewportOverridesRef)).get(tabId);
-          if (!latest || tabLifecycleGenerations.get(tabId) !== generation) {
-            return yield* new PreviewTabNotFoundError({ tabId });
-          }
-          const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-          if (!current) return yield* new PreviewTabNotFoundError({ tabId });
-          if (current.webContentsId == null) {
-            return yield* new PreviewWebviewNotInitializedError({ tabId });
-          }
-          const currentWebContents = webContents.fromId(current.webContentsId);
-          if (!currentWebContents || currentWebContents.isDestroyed()) {
-            return yield* new PreviewWebContentsNotFoundError({
-              tabId,
-              webContentsId: current.webContentsId,
-            });
-          }
-          if (latest === applied && currentWebContents === appliedWebContents) return;
-          yield* applyViewportOverride(tabId, currentWebContents, latest.input);
-          applied = latest;
-          appliedWebContents = currentWebContents;
+    if (Exit.isFailure(initialExit)) {
+      const current = yield* currentViewportTarget(tabId, generation);
+      if (current.intent !== intent || current.wc === wc) {
+        return yield* Effect.failCause(initialExit.cause);
+      }
+    }
+
+    let applied = Exit.isSuccess(initialExit) ? intent : undefined;
+    let appliedWebContents = Exit.isSuccess(initialExit) ? wc : undefined;
+    while (true) {
+      const current = yield* currentViewportTarget(tabId, generation);
+      if (current.intent === applied && current.wc === appliedWebContents) return;
+
+      const applyExit = yield* Effect.exit(
+        applyViewportOverride(tabId, current.wc, current.intent?.input ?? { clear: true }),
+      );
+      if (Exit.isFailure(applyExit)) {
+        const afterFailure = yield* currentViewportTarget(tabId, generation);
+        if (afterFailure.intent !== current.intent || afterFailure.wc === current.wc) {
+          return yield* Effect.failCause(applyExit.cause);
         }
-      }),
-    );
-    if (Exit.isFailure(reconcileExit)) return yield* Effect.failCause(reconcileExit.cause);
+        continue;
+      }
+      applied = current.intent;
+      appliedWebContents = current.wc;
+    }
   });
 
   // Human/toolbar path. Must not take agent control or write a resize action.

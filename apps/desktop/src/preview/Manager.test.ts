@@ -2295,6 +2295,113 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("retries a viewport intent when its captured webview is replaced", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const applyStarted = Promise.withResolvers<void>();
+        const releaseApply = Promise.withResolvers<void>();
+        const firstSendCommand = vi.fn(async (method: string) => {
+          if (method !== "Emulation.setDeviceMetricsOverride") return;
+          applyStarted.resolve();
+          await releaseApply.promise;
+          throw new Error("replaced guest rejected viewport");
+        });
+        const replacementSendCommand = vi.fn(
+          async (_method: string, _params?: Record<string, unknown>) => undefined,
+        );
+        const first = makeViewportWebContents(42, firstSendCommand);
+        const replacement = makeViewportWebContents(43, replacementSendCommand);
+        fromId.mockImplementation(
+          (id) => (id === 42 ? first : id === 43 ? replacement : null) as never,
+        );
+
+        yield* manager.createTab("tab_viewport_replaced_apply");
+        yield* manager.registerWebview("tab_viewport_replaced_apply", 42);
+        yield* Effect.yieldNow;
+
+        const setter = yield* manager
+          .setViewport("tab_viewport_replaced_apply", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => applyStarted.promise);
+        yield* manager.registerWebview("tab_viewport_replaced_apply", 43);
+        releaseApply.resolve();
+        yield* Fiber.join(setter);
+
+        expect(replacementSendCommand).toHaveBeenCalledWith(
+          "Emulation.setDeviceMetricsOverride",
+          expect.objectContaining({ width: 1024, height: 768 }),
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("clears a rejected viewport after a concurrent session restore", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const initialApplyStarted = Promise.withResolvers<void>();
+        const releaseInitialApply = Promise.withResolvers<void>();
+        const restoreApplyStarted = Promise.withResolvers<void>();
+        const releaseRestoreApply = Promise.withResolvers<void>();
+        const firstClearApplied = Promise.withResolvers<void>();
+        const secondClearApplied = Promise.withResolvers<void>();
+        let viewportApplyCount = 0;
+        let viewportClearCount = 0;
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method === "Emulation.clearDeviceMetricsOverride") {
+            viewportClearCount += 1;
+            if (viewportClearCount === 1) firstClearApplied.resolve();
+            if (viewportClearCount === 2) secondClearApplied.resolve();
+            return;
+          }
+          if (method !== "Emulation.setDeviceMetricsOverride") return;
+          viewportApplyCount += 1;
+          if (viewportApplyCount === 1) {
+            initialApplyStarted.resolve();
+            await releaseInitialApply.promise;
+            throw new Error("guest rejected viewport");
+          }
+          if (viewportApplyCount === 2) {
+            restoreApplyStarted.resolve();
+            await releaseRestoreApply.promise;
+          }
+        });
+        let onDevToolsClosed: (() => void) | undefined;
+        const wc = Object.assign(makeViewportWebContents(42, sendCommand), {
+          once: vi.fn((event: string, listener: () => void) => {
+            if (event === "devtools-closed") onDevToolsClosed = listener;
+          }),
+          openDevTools: vi.fn(),
+        });
+        fromId.mockReturnValue(wc);
+
+        yield* manager.createTab("tab_viewport_rejected_restore");
+        yield* manager.registerWebview("tab_viewport_rejected_restore", 42);
+        yield* Effect.yieldNow;
+
+        const setter = yield* manager
+          .setViewport("tab_viewport_rejected_restore", { width: 1024, height: 768 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => initialApplyStarted.promise);
+        yield* manager.openDevTools("tab_viewport_rejected_restore");
+        expect(onDevToolsClosed).toBeDefined();
+        onDevToolsClosed?.();
+        yield* Effect.promise(() => restoreApplyStarted.promise);
+
+        releaseInitialApply.resolve();
+        const setterExit = yield* Fiber.await(setter);
+        expect(Exit.isFailure(setterExit)).toBe(true);
+        yield* Effect.promise(() => firstClearApplied.promise);
+
+        releaseRestoreApply.resolve();
+        yield* Effect.promise(() => secondClearApplied.promise);
+        const viewportCalls = sendCommand.mock.calls.filter(([method]) =>
+          method.includes("DeviceMetricsOverride"),
+        );
+        expect(viewportCalls.at(-1)?.[0]).toBe("Emulation.clearDeviceMetricsOverride");
+      }),
+    ),
+  );
+
   effectIt.effect("restores a newer human viewport after a queued agent resize", () =>
     withManager((manager) =>
       Effect.gen(function* () {
