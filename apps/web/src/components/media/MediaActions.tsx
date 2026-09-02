@@ -25,6 +25,17 @@ export interface MediaActionSource {
   readonly onOpenFile?: () => void;
 }
 
+/** Browser/Electron native image menus can copy or save rendered cross-origin images without CORS. */
+export function shouldUseNativeImageContextMenu(source: MediaActionSource): boolean {
+  return (
+    source.kind === "image" &&
+    source.src !== null &&
+    source.reference?.kind === "url" &&
+    source.asset === undefined &&
+    source.onOpenFile === undefined
+  );
+}
+
 function mediaFileName(source: MediaActionSource): string {
   return (
     (source.reference && mediaReferenceFileName(source.reference)) || source.name || source.kind
@@ -83,7 +94,8 @@ export function MediaActions({
   const menuOpen = useRef(false);
   const reference = source.reference;
   const hasActions =
-    source.kind === "image" || reference !== undefined || source.onOpenFile !== undefined;
+    !shouldUseNativeImageContextMenu(source) &&
+    (source.kind === "image" || reference !== undefined || source.onOpenFile !== undefined);
   const tooltip = reference?.kind === "file" ? reference.path : (reference?.url ?? source.name);
 
   const showMenu = async (position: { x: number; y: number }) => {
