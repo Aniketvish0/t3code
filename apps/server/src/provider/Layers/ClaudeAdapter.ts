@@ -652,20 +652,30 @@ function normalizeClaudeTurnTokenUsage(
     };
   }
 
-  return {
-    usageStatus:
-      terminalStatus === "completed" &&
-      result?.subtype === "success" &&
-      inputTokens !== undefined &&
-      rawOutputTokens !== undefined
-        ? "complete"
-        : "partial",
+  const commonUsage = {
     usageScope: "main_agent",
-    ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
-    ...(rawOutputTokens !== undefined ? { outputTokens: rawOutputTokens } : {}),
     hasSubagents,
+  } as const;
+  if (
+    terminalStatus === "completed" &&
+    result?.subtype === "success" &&
+    inputTokens !== undefined &&
+    rawOutputTokens !== undefined
+  ) {
+    return {
+      ...commonUsage,
+      usageStatus: "complete",
+      inputTokens,
+      outputTokens: rawOutputTokens,
+    };
+  }
+  return {
+    ...commonUsage,
+    usageStatus: "partial",
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(rawOutputTokens !== undefined ? { outputTokens: rawOutputTokens } : {}),
   };
 }
 

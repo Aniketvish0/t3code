@@ -352,11 +352,13 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
-function makeProviderServiceLayer(options: {
-  readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
-  readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
-  readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
-} = {}) {
+function makeProviderServiceLayer(
+  options: {
+    readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
+    readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+  } = {},
+) {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
@@ -2303,6 +2305,246 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
       assert.equal(completed.length, 1);
       assert.notProperty(completed[0]?.properties ?? {}, "effort");
+    }),
+  );
+
+  it.effect("ignores model metadata bound to another provider instance", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-mismatched-model-instance");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* provider.sendTurn({
+        threadId,
+        input: "ignore this mismatched selection",
+        attachments: [],
+        modelSelection: createModelSelection(secondaryCodexInstanceId, "wrong-model", [
+          { id: "reasoningEffort", value: "high" },
+        ]),
+      });
+
+      const runtimeEvent = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      primaryAnalyticsCodex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-turn-analytics-mismatched-model-instance"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: turn.turnId,
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(runtimeEvent);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 1);
+      assert.notProperty(completed[0]?.properties ?? {}, "model");
+      assert.notProperty(completed[0]?.properties ?? {}, "effort");
+    }),
+  );
+
+  it.effect("keeps overlapping request metadata with out-of-order adapter responses", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-overlap");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const firstStarted = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const firstRelease = yield* Deferred.make<void>();
+      const secondRelease = yield* Deferred.make<void>();
+      const initialStartsObserved = yield* Deferred.make<void>();
+      let initialStartCount = 0;
+      const firstTurnId = asTurnId("turn-analytics-overlap-first");
+      const secondTurnId = asTurnId("turn-analytics-overlap-second");
+      primaryAnalyticsCodex.sendTurn
+        .mockImplementationOnce((input) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(firstStarted, undefined);
+            yield* Deferred.await(firstRelease);
+            return { threadId: input.threadId, turnId: firstTurnId };
+          }),
+        )
+        .mockImplementationOnce((input) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(secondStarted, undefined);
+            yield* Deferred.await(secondRelease);
+            return { threadId: input.threadId, turnId: secondTurnId };
+          }),
+        );
+
+      const runtimeEvents = yield* Stream.take(provider.streamEvents, 5).pipe(
+        Stream.tap((event) => {
+          if (event.type !== "turn.started" || initialStartCount >= 2) return Effect.void;
+          initialStartCount += 1;
+          return initialStartCount === 2
+            ? Deferred.succeed(initialStartsObserved, undefined).pipe(Effect.asVoid)
+            : Effect.void;
+        }),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      const firstSend = yield* provider
+        .sendTurn({
+          threadId,
+          input: "first",
+          attachments: [],
+          interactionMode: "default",
+          modelSelection: createModelSelection(codexInstanceId, "requested-first"),
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstStarted);
+      const secondSend = yield* provider
+        .sendTurn({
+          threadId,
+          input: "second",
+          attachments: [],
+          interactionMode: "plan",
+          modelSelection: createModelSelection(codexInstanceId, "requested-second"),
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(secondStarted);
+
+      for (const [turnId, suffix] of [
+        [firstTurnId, "first"],
+        [secondTurnId, "second"],
+      ] as const) {
+        primaryAnalyticsCodex.emit({
+          type: "turn.started",
+          eventId: asEventId(`evt-turn-analytics-overlap-start-${suffix}`),
+          provider: CODEX_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId,
+          payload: { model: `native-${suffix}`, effort: `native-effort-${suffix}` },
+        });
+      }
+      yield* Deferred.await(initialStartsObserved);
+      yield* Deferred.succeed(secondRelease, undefined);
+      yield* Fiber.join(secondSend);
+      primaryAnalyticsCodex.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-turn-analytics-overlap-start-second-duplicate"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: secondTurnId,
+        payload: { model: "native-second", effort: "native-effort-second" },
+      });
+      yield* Deferred.succeed(firstRelease, undefined);
+      yield* Fiber.join(firstSend);
+      for (const [turnId, suffix] of [
+        [secondTurnId, "second"],
+        [firstTurnId, "first"],
+      ] as const) {
+        primaryAnalyticsCodex.emit({
+          type: "turn.completed",
+          eventId: asEventId(`evt-turn-analytics-overlap-complete-${suffix}`),
+          provider: CODEX_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId,
+          payload: { state: "completed" },
+        });
+      }
+      yield* Fiber.join(runtimeEvents);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 2);
+      assert.deepInclude(completed[0]?.properties ?? {}, {
+        model: "native-second",
+        effort: "native-effort-second",
+        interactionMode: "plan",
+      });
+      assert.deepInclude(completed[1]?.properties ?? {}, {
+        model: "native-first",
+        effort: "native-effort-first",
+        interactionMode: "default",
+      });
+    }),
+  );
+
+  it.effect("keeps metadata when an adapter completes before sendTurn returns", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-fast-completion");
+      const turnId = asTurnId("turn-analytics-fast-completion");
+      const returnRelease = yield* Deferred.make<void>();
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* Effect.yieldNow;
+      primaryAnalyticsCodex.sendTurn.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          primaryAnalyticsCodex.emit({
+            type: "turn.started",
+            eventId: asEventId("evt-turn-analytics-fast-start"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+            payload: { model: "native-fast", effort: "high" },
+          });
+          primaryAnalyticsCodex.emit({
+            type: "turn.completed",
+            eventId: asEventId("evt-turn-analytics-fast-complete"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+            payload: { state: "completed" },
+          });
+          yield* Deferred.await(returnRelease);
+          return { threadId: input.threadId, turnId };
+        }),
+      );
+
+      const terminalReceipt = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      const sendFiber = yield* provider
+        .sendTurn({
+          threadId,
+          input: "finish immediately",
+          attachments: [],
+          interactionMode: "plan",
+          modelSelection: createModelSelection(codexInstanceId, "requested-fast"),
+        })
+        .pipe(Effect.forkChild);
+      const terminal = yield* Fiber.join(terminalReceipt);
+      assert.equal(terminal._tag, "Some");
+      assert.equal(sendFiber.pollUnsafe(), undefined);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 1);
+      assert.deepInclude(completed[0]?.properties ?? {}, {
+        model: "native-fast",
+        effort: "high",
+        interactionMode: "plan",
+      });
+      yield* Deferred.succeed(returnRelease, undefined);
+      yield* Fiber.join(sendFiber);
     }),
   );
 

@@ -93,7 +93,7 @@ interface TurnAnalyticsMetadata {
 }
 
 interface TurnAnalyticsSessionState {
-  pending: TurnAnalyticsMetadata | undefined;
+  readonly pendingByRequestId: Map<number, TurnAnalyticsMetadata>;
   readonly activeByTurnId: Map<string, TurnAnalyticsMetadata>;
 }
 
@@ -320,7 +320,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return yield* Ref.modify(turnAnalytics, (state) => {
       const key = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
       const session = state.sessions.get(key) ?? {
-        pending: undefined,
+        pendingByRequestId: new Map(),
         activeByTurnId: new Map(),
       };
       const metadata: TurnAnalyticsMetadata = {
@@ -333,7 +333,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
         ...(input.runtimeMode ? { runtimeMode: input.runtimeMode } : {}),
       };
-      session.pending = metadata;
+      session.pendingByRequestId.set(requestId, metadata);
       state.sessions.set(key, session);
       return [metadata, state] as const;
     });
@@ -347,9 +347,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     Ref.update(turnAnalytics, (state) => {
       const sessionKey = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
       const session = state.sessions.get(sessionKey);
-      if (session?.pending?.requestId === input.requestId) {
-        session.pending = undefined;
-        if (session.activeByTurnId.size === 0) {
+      if (session) {
+        session.pendingByRequestId.delete(input.requestId);
+        if (session.activeByTurnId.size === 0 && session.pendingByRequestId.size === 0) {
           state.sessions.delete(sessionKey);
         }
       }
@@ -371,9 +371,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const sessionKey = turnAnalyticsSessionKey(input.providerInstanceId, input.threadId);
       const session = state.sessions.get(sessionKey);
       if (!session || state.completedKeys.has(completionKey)) {
-        if (session?.pending?.requestId === input.metadata.requestId) {
-          session.pending = undefined;
-          if (session.activeByTurnId.size === 0) {
+        if (session) {
+          session.pendingByRequestId.delete(input.metadata.requestId);
+          if (session.activeByTurnId.size === 0 && session.pendingByRequestId.size === 0) {
             state.sessions.delete(sessionKey);
           }
         }
@@ -395,9 +395,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ? { runtimeMode: input.metadata.runtimeMode }
             : {}),
       });
-      if (session.pending?.requestId === input.metadata.requestId) {
-        session.pending = undefined;
-      }
+      session.pendingByRequestId.delete(input.metadata.requestId);
       return state;
     });
 
@@ -416,24 +414,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (state.completedKeys.has(completionKey)) return state;
       const sessionKey = turnAnalyticsSessionKey(source.instanceId, event.threadId);
       const session = state.sessions.get(sessionKey) ?? {
-        pending: undefined,
+        pendingByRequestId: new Map(),
         activeByTurnId: new Map(),
       };
       const current = session.activeByTurnId.get(String(event.turnId));
-      const base = current ?? session.pending;
+      const solePending =
+        session.pendingByRequestId.size === 1
+          ? session.pendingByRequestId.values().next().value
+          : undefined;
       const metadata: TurnAnalyticsMetadata = {
-        ...(base ?? {
-          requestId: ++turnAnalyticsRequestId,
-          provider: source.provider,
-          startedAtMs: observedAtMs,
-          mixedModels: false,
-        }),
+        ...(current ??
+          solePending ?? {
+            requestId: ++turnAnalyticsRequestId,
+            provider: source.provider,
+            startedAtMs: observedAtMs,
+            mixedModels: false,
+          }),
         ...(event.payload.model ? { model: event.payload.model } : {}),
         ...(event.payload.effort ? { effort: event.payload.effort } : {}),
       };
       setActiveTurnAnalytics(session, String(event.turnId), metadata);
-      if (session.pending?.requestId === metadata.requestId) {
-        session.pending = undefined;
+      if (solePending?.requestId === metadata.requestId) {
+        session.pendingByRequestId.delete(solePending.requestId);
       }
       state.sessions.set(sessionKey, session);
       return state;
@@ -485,8 +487,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const session = state.sessions.get(sessionKey);
       const metadata = session?.activeByTurnId.get(turnId);
       session?.activeByTurnId.delete(turnId);
-      if (session && session.pending === metadata) session.pending = undefined;
-      if (session && session.activeByTurnId.size === 0 && session.pending === undefined) {
+      if (session && session.activeByTurnId.size === 0 && session.pendingByRequestId.size === 0) {
         state.sessions.delete(sessionKey);
       }
 
@@ -1092,11 +1093,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
+      const analyticsModelSelection =
+        input.modelSelection?.instanceId === routed.instanceId ? input.modelSelection : undefined;
       const turnMetadata = yield* beginTurnAnalytics({
         providerInstanceId: routed.instanceId,
         provider: routed.adapter.provider,
         threadId: input.threadId,
-        modelSelection: input.modelSelection,
+        modelSelection: analyticsModelSelection,
         interactionMode: input.interactionMode,
         runtimeMode: routed.runtimeMode,
       });

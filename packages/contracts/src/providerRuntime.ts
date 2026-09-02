@@ -370,16 +370,27 @@ export type TurnStartedPayload = typeof TurnStartedPayload.Type;
  * Complete means the provider supplied full input and output totals. Partial
  * means every included count is valid, but the full turn total is not known.
  */
-export const TurnTokenUsage = Schema.Struct({
-  usageStatus: Schema.Literals(["complete", "partial", "unavailable"]),
+const TurnTokenUsageCommonFields = {
   usageScope: Schema.Literal("main_agent"),
-  inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   cacheCreationTokens: Schema.optional(NonNegativeInt),
-  outputTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
   hasSubagents: Schema.Boolean,
-});
+};
+export const TurnTokenUsage = Schema.Union([
+  Schema.Struct({
+    ...TurnTokenUsageCommonFields,
+    usageStatus: Schema.Literal("complete"),
+    inputTokens: NonNegativeInt,
+    outputTokens: NonNegativeInt,
+  }),
+  Schema.Struct({
+    ...TurnTokenUsageCommonFields,
+    usageStatus: Schema.Literals(["partial", "unavailable"]),
+    inputTokens: Schema.optional(NonNegativeInt),
+    outputTokens: Schema.optional(NonNegativeInt),
+  }),
+]);
 export type TurnTokenUsage = typeof TurnTokenUsage.Type;
 
 const TurnCompletedPayload = Schema.Struct({
