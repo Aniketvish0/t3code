@@ -2354,6 +2354,48 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
     }),
   );
 
+  it.effect("bounds active metadata while preserving recent delayed completions", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-bounded-active");
+      const runtimeEvents = yield* Stream.take(provider.streamEvents, 12).pipe(
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      for (let index = 1; index <= 10; index += 1) {
+        primaryAnalyticsCodex.emit({
+          type: "turn.started",
+          eventId: asEventId(`evt-turn-analytics-bounded-start-${index}`),
+          provider: CODEX_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId: asTurnId(`turn-analytics-bounded-${index}`),
+          payload: { model: `model-${index}` },
+        });
+      }
+      for (const index of [3, 1]) {
+        primaryAnalyticsCodex.emit({
+          type: "turn.completed",
+          eventId: asEventId(`evt-turn-analytics-bounded-complete-${index}`),
+          provider: CODEX_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId: asTurnId(`turn-analytics-bounded-${index}`),
+          payload: { state: "completed" },
+        });
+      }
+      yield* Fiber.join(runtimeEvents);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 2);
+      assert.equal(completed[0]?.properties?.model, "model-3");
+      assert.notProperty(completed[1]?.properties ?? {}, "model");
+    }),
+  );
+
   it.effect("separates provider instances and omits unavailable counts", () =>
     Effect.gen(function* () {
       recordedTurnAnalytics.reset();

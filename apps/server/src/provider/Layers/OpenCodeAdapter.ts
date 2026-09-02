@@ -371,6 +371,10 @@ interface OpenCodeSessionContext {
 
 interface OpenCodeTurnTokenUsageAccumulator {
   readonly partIds: Set<string>;
+  readonly promptMessageIds: Set<string>;
+  readonly assistantMessageIds: Set<string>;
+  readonly resolvedAssistantMessageIds: Set<string>;
+  readonly unresolvedStepPartIds: Set<string>;
   inputTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
@@ -383,6 +387,10 @@ interface OpenCodeTurnTokenUsageAccumulator {
 function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumulator {
   return {
     partIds: new Set(),
+    promptMessageIds: new Set(),
+    assistantMessageIds: new Set(),
+    resolvedAssistantMessageIds: new Set(),
+    unresolvedStepPartIds: new Set(),
     inputTokens: 0,
     cachedInputTokens: 0,
     cacheCreationTokens: 0,
@@ -420,7 +428,8 @@ function takeOpenCodeTurnTokenUsage(
     };
   }
   return {
-    usageStatus: complete && usage.complete ? "complete" : "partial",
+    usageStatus:
+      complete && usage.complete && usage.unresolvedStepPartIds.size === 0 ? "complete" : "partial",
     usageScope: "main_agent",
     inputTokens: usage.inputTokens,
     cachedInputTokens: usage.cachedInputTokens,
@@ -2117,9 +2126,19 @@ export function makeOpenCodeAdapter(
           }
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
+            const usage = context.turnTokenUsage;
+            const ownsUsage = usage?.promptMessageIds.has(event.properties.info.parentID) ?? false;
+            if (usage) {
+              usage.resolvedAssistantMessageIds.add(event.properties.info.id);
+              if (ownsUsage) usage.assistantMessageIds.add(event.properties.info.id);
+            }
             for (const part of context.partById.values()) {
               if (part.messageID !== event.properties.info.id) {
                 continue;
+              }
+              if (usage && part.type === "step-finish") {
+                usage.unresolvedStepPartIds.delete(part.id);
+                if (ownsUsage) accumulateOpenCodeStepUsage(usage, part);
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
@@ -2183,7 +2202,14 @@ export function makeOpenCodeAdapter(
           const messageRole = messageRoleForPart(context, part);
 
           if (turnId && part.type === "step-finish" && context.turnTokenUsage) {
-            accumulateOpenCodeStepUsage(context.turnTokenUsage, part);
+            if (context.turnTokenUsage.assistantMessageIds.has(part.messageID)) {
+              accumulateOpenCodeStepUsage(context.turnTokenUsage, part);
+            } else if (
+              !context.turnTokenUsage.resolvedAssistantMessageIds.has(part.messageID) &&
+              context.messageRoleById.get(part.messageID) !== "assistant"
+            ) {
+              context.turnTokenUsage.unresolvedStepPartIds.add(part.id);
+            }
           }
 
           if (messageRole === "assistant") {
@@ -2826,6 +2852,7 @@ export function makeOpenCodeAdapter(
           if (steeringTurnId === undefined) {
             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
           }
+          context.turnTokenUsage?.promptMessageIds.add(messageId);
           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
           context.activeVariant = variant;
           if (steeringTurnId === undefined) {

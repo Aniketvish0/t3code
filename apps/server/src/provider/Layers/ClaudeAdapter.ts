@@ -623,11 +623,14 @@ function normalizeClaudeTurnTokenUsage(
   const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
   const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
   const rawOutputTokens = finiteNonNegativeInteger(usage.output_tokens);
+  const cachedInputContribution = usage.cache_read_input_tokens == null ? 0 : cachedInputTokens;
+  const cacheCreationContribution =
+    usage.cache_creation_input_tokens == null ? 0 : cacheCreationTokens;
   const inputTokens =
     uncachedInputTokens !== undefined &&
-    cachedInputTokens !== undefined &&
-    cacheCreationTokens !== undefined
-      ? uncachedInputTokens + cachedInputTokens + cacheCreationTokens
+    cachedInputContribution !== undefined &&
+    cacheCreationContribution !== undefined
+      ? uncachedInputTokens + cachedInputContribution + cacheCreationContribution
       : undefined;
   const hasKnownUsage =
     uncachedInputTokens !== undefined ||

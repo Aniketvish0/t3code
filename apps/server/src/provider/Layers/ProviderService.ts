@@ -104,6 +104,20 @@ interface TurnAnalyticsState {
 }
 
 const MAX_COMPLETED_TURN_ANALYTICS_KEYS = 512;
+const MAX_ACTIVE_TURN_ANALYTICS_PER_SESSION = 8;
+
+function setActiveTurnAnalytics(
+  session: TurnAnalyticsSessionState,
+  turnId: string,
+  metadata: TurnAnalyticsMetadata,
+): void {
+  session.activeByTurnId.set(turnId, metadata);
+  while (session.activeByTurnId.size > MAX_ACTIVE_TURN_ANALYTICS_PER_SESSION) {
+    const oldestTurnId = session.activeByTurnId.keys().next().value;
+    if (oldestTurnId === undefined) return;
+    session.activeByTurnId.delete(oldestTurnId);
+  }
+}
 
 function turnAnalyticsSessionKey(instanceId: ProviderInstanceId, threadId: ThreadId): string {
   return `${String(instanceId)}\u0000${String(threadId)}`;
@@ -367,7 +381,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         return state;
       }
       const existing = session.activeByTurnId.get(input.turnId);
-      session.activeByTurnId.set(input.turnId, {
+      setActiveTurnAnalytics(session, input.turnId, {
         ...(existing ?? input.metadata),
         ...(existing?.model ? {} : input.metadata.model ? { model: input.metadata.model } : {}),
         ...(existing?.effort ? {} : input.metadata.effort ? { effort: input.metadata.effort } : {}),
@@ -418,7 +432,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(event.payload.model ? { model: event.payload.model } : {}),
         ...(event.payload.effort ? { effort: event.payload.effort } : {}),
       };
-      session.activeByTurnId.set(String(event.turnId), metadata);
+      setActiveTurnAnalytics(session, String(event.turnId), metadata);
       if (session.pending?.requestId === metadata.requestId) {
         session.pending = undefined;
       }
