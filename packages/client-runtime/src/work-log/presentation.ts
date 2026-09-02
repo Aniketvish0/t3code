@@ -4,10 +4,8 @@ import {
   type ThreadId,
   type ToolLifecycleItemType,
 } from "@t3tools/contracts";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 export function isWorktreeSetupActivity(kind: string): boolean {
@@ -355,10 +353,6 @@ export interface ViewedImageAsset {
   readonly srcFragment: string;
 }
 
-/**
- * Host paths, including T3's own attachment files, are served in place through
- * the media-file route, so the client never needs to recognize attachment ids.
- */
 export function resolveViewedImageAsset(
   source: string,
   input: {
@@ -366,18 +360,22 @@ export function resolveViewedImageAsset(
     readonly workspaceRoot?: string | null | undefined;
   },
 ): ViewedImageAsset | null {
+  // A relative path with no known workspace still names a media-file relative
+  // to the thread's workspace, so classify against "." and drop the prefix.
   const imageSource = classifyMarkdownImageSource(source, input.workspaceRoot ?? ".");
   if (imageSource._tag !== "WorkspaceFile") return null;
-
-  const path =
+  const resolvedFilePath =
     input.workspaceRoot == null && imageSource.path.startsWith("./")
       ? imageSource.path.slice(2)
       : imageSource.path;
-  return {
-    resource: { _tag: "media-file", threadId: input.threadId, path },
-    alt: path.split(/[\\/]/).at(-1) ?? "image",
-    srcFragment: markdownImageSourceFragment(source),
-  };
+
+  const media = resolveMediaSource(source, {
+    threadId: input.threadId,
+    workspaceRoot: input.workspaceRoot,
+    resolvedFilePath,
+  });
+  if (media === null || media.access !== "environment") return null;
+  return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
 }
 
 function toolGroupActionCount(
