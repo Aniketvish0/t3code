@@ -1558,7 +1558,9 @@ function SavedBackendListRow({
                 <TooltipPopup side="top" className="max-w-72 whitespace-pre-wrap leading-tight">
                   {isConnected
                     ? environment.relayManaged
-                      ? "Disconnects this device only. The environment stays on your T3 Connect account."
+                      ? cleanupPending
+                        ? "Disconnects this device only. This environment is already removed from your T3 Connect account."
+                        : "Disconnects this device only. The environment stays on your T3 Connect account."
                       : "Disconnects and forgets this environment on this device."
                     : "Connects this device to the environment."}
                 </TooltipPopup>
