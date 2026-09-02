@@ -63,6 +63,7 @@ import {
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import {
   BotIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -2084,7 +2085,7 @@ function ThinkingTimelineRow() {
   // Reserve the activity row during setup so the handoff keeps the same height.
   return (
     <div className="min-h-7">
-      {isPreparingWorktree ? null : <LiveActivityRow label="Thinking" />}
+      {isPreparingWorktree ? null : <LiveActivityRow label="Thinking" iconName="brain" />}
     </div>
   );
 }
@@ -2770,6 +2771,7 @@ function useStableRows(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
 
 type WorkEntryIconName =
   | "bot"
+  | "brain"
   | "check"
   | "circle-alert"
   | "eye"
@@ -2787,6 +2789,8 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
   switch (name) {
     case "bot":
       return <BotIcon className={className} aria-hidden />;
+    case "brain":
+      return <BrainIcon className={className} aria-hidden />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
@@ -2841,8 +2845,8 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   }
   if (tone === "thinking") {
     return {
-      iconName: "bot",
-      className: "text-foreground/92",
+      iconName: "brain",
+      className: "text-foreground",
     };
   }
   if (tone === "info") {

@@ -1388,6 +1388,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(error._tag).toBe("SourceControlProviderError");
     }),
   );
+
   it.effect("status finds a merged PR after its remote branch was deleted", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1456,6 +1457,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
     }),
   );
+
   it.effect("status still looks up PRs for a branch pushed without --set-upstream", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
