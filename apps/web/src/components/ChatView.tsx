@@ -1830,21 +1830,31 @@ function ChatViewContent(props: ChatViewProps) {
   // exactly the completion the user is looking at: a wake or completion that
   // lands later still gets its signal (the boundary never moves backwards).
   // Only a focused, visible document counts as reading; a completion that
-  // lands in a background tab stays unread until the user comes back.
+  // lands in a background tab stays unread until the user comes back. The
+  // listeners stay attached for the life of the effect so a later refocus
+  // re-acks (the hook skips the send when the server already covers it).
   // The environment config decides whether the ack is a server command or a
-  // local write, so wait for it: an ack sent before it loads would be stuck
-  // in local storage and never reach other clients.
+  // local write, and the command needs a live connection, so wait for both:
+  // an ack sent early would be misfiled locally or fail silently. Both are
+  // deps, so the effect re-runs once config lands or the socket reconnects.
   const serverThreadEnvironmentId = serverThread?.environmentId;
   const serverThreadId = serverThread?.id;
   const serverThreadCompletedAt = serverThread?.latestTurn?.completedAt;
   const serverThreadConfigLoaded =
     serverThreadEnvironmentId !== undefined && serverConfigs.has(serverThreadEnvironmentId);
+  const serverThreadEnvironment =
+    serverThreadEnvironmentId === undefined
+      ? null
+      : (environmentById.get(serverThreadEnvironmentId) ?? null);
+  const serverThreadConnected =
+    serverThreadEnvironment === null || serverThreadEnvironment.connection.phase === "connected";
   useEffect(() => {
     if (
       !serverThreadEnvironmentId ||
       !serverThreadId ||
       !serverThreadCompletedAt ||
-      !serverThreadConfigLoaded
+      !serverThreadConfigLoaded ||
+      !serverThreadConnected
     ) {
       return;
     }
@@ -1852,8 +1862,6 @@ function ChatViewContent(props: ChatViewProps) {
     const acknowledge = () => {
       if (document.visibilityState !== "visible" || !document.hasFocus()) return;
       markViewed(threadRef, serverThreadCompletedAt);
-      window.removeEventListener("focus", acknowledge);
-      document.removeEventListener("visibilitychange", acknowledge);
     };
     acknowledge();
     window.addEventListener("focus", acknowledge);
@@ -1865,6 +1873,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     markViewed,
     serverThreadConfigLoaded,
+    serverThreadConnected,
     serverThreadEnvironmentId,
     serverThreadId,
     serverThreadCompletedAt,
