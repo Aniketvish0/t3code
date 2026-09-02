@@ -147,7 +147,6 @@ function buildProps() {
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
-    openingVideoAttachmentId: null,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
@@ -482,22 +481,11 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
-    const busyMarkup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[entry]}
-        openingVideoAttachmentId="attachment-demo-mp4"
-      />,
-    );
 
     expect(markup).toContain('aria-label="Play demo.mp4"');
     expect(markup).toContain("min-h-[72px]");
     expect(markup).toContain(">demo.mp4</span>");
     expect(markup).not.toContain('aria-label="Download demo.mp4"');
-    expect(busyMarkup).toContain('aria-busy="true"');
-    expect(busyMarkup).toContain('aria-disabled="true"');
-    expect(busyMarkup).not.toContain('disabled=""');
-    expect(busyMarkup).toContain(">Loading…</span>");
   });
   it("renders a file download button without creating its URL in advance", () => {
     const entry = {

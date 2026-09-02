@@ -14,6 +14,7 @@ interface MediaVideoPlayerProps {
   readonly originalUrl?: string | undefined;
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
+  readonly autoPlay?: boolean | undefined;
   readonly className?: string | undefined;
   readonly videoClassName?: string | undefined;
   readonly style?: CSSProperties | undefined;
@@ -31,6 +32,7 @@ export function MediaVideoPlayer({
   originalUrl,
   revision = null,
   preload = "visible",
+  autoPlay = false,
   className,
   videoClassName,
   style,
@@ -168,6 +170,7 @@ export function MediaVideoPlayer({
           ref={videoRef}
           src={src}
           aria-label={label || "Video preview"}
+          autoPlay={autoPlay}
           controls
           playsInline
           preload={preload === "metadata" || preloadedSrc === src ? "metadata" : "none"}

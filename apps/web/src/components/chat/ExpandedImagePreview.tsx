@@ -3,9 +3,11 @@ import { type ChatImageAttachment, isVideoAttachment } from "../../types";
 import type {
   AssetCreateUrlResult,
   AssetResource,
+  ChatFileAttachment,
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { videoMimeType } from "@t3tools/shared/video";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
@@ -17,12 +19,16 @@ import type { MediaActionSource } from "../media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
 export interface ExpandedImageItem {
-  src: string;
+  /** A loadable URL, or null when the dialog must mint one from `asset` first. */
+  src: string | null;
   name: string;
   type?: "video";
   autoPlay?: boolean;
   /** Authored remote destination to open when embedding fails, never a generated asset URL. */
   originalUrl?: string;
+  /** Playback position or SVG fragment to re-append when the dialog mints a fresh URL. */
+  srcFragment?: string;
+  /** When this carries an asset, the dialog mints and re-mints the URL itself. */
   actionsSource?: MediaActionSource;
 }
 
@@ -80,6 +86,7 @@ export async function resolveMarkdownMediaPreview(input: {
         ...(media.access === "direct" && resolveExternalWebLinkHost(media.uri) !== null
           ? { originalUrl: media.uri }
           : {}),
+        ...(media.srcFragment ? { srcFragment: media.srcFragment } : {}),
         actionsSource: {
           kind,
           name,
@@ -94,6 +101,40 @@ export async function resolveMarkdownMediaPreview(input: {
     ],
     index: 0,
   };
+}
+
+/** A sent video attachment opens through its asset resource; the dialog mints and re-mints the URL. */
+export function buildAttachmentVideoPreview(
+  environmentId: EnvironmentId,
+  attachment: ChatFileAttachment,
+): ExpandedImagePreview {
+  const asset = {
+    environmentId,
+    resource: {
+      _tag: "attachment" as const,
+      attachmentId: attachment.id,
+      fileName: attachment.name,
+      mimeType: videoMimeType(attachment) ?? attachment.mimeType,
+    },
+  };
+  return {
+    images: [
+      {
+        src: null,
+        name: attachment.name,
+        type: "video",
+        actionsSource: { kind: "video", name: attachment.name, src: null, asset },
+      },
+    ],
+    index: 0,
+  };
+}
+
+/** Identity for remounting the dialog: the URL, or the asset when there is no URL yet. */
+export function expandedImageKey(preview: ExpandedImagePreview): string {
+  const item = preview.images[preview.index];
+  const asset = item?.actionsSource?.asset;
+  return `${item?.src ?? (asset ? JSON.stringify([asset.environmentId, asset.resource]) : "image")}:${preview.index}`;
 }
 
 export function attachVideoThumbnail(video: HTMLVideoElement, file: File): () => void {
