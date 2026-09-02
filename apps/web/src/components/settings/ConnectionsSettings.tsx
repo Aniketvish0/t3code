@@ -1815,16 +1815,17 @@ export function ConnectionsSettings() {
     [environments],
   );
   const relayDiscovery = useRelayEnvironmentDiscovery();
-  // Discovery renders its own error only when nothing is saved. Show the
-  // account error otherwise, so a failed account query is never silent.
-  const showAccountError =
-    accountActions.error !== null &&
-    !(
-      savedEnvironments.length === 0 &&
-      relayDiscovery.environments.size === 0 &&
-      !relayDiscovery.refreshing &&
-      (relayDiscovery.offline || Option.isSome(relayDiscovery.error))
+  // Discovery renders its own error only when it has no rows to show, which
+  // excludes the primary environment. Show the account error otherwise, so a
+  // failed account query is never silent and the two cards never stack.
+  const discoveryShowsError =
+    savedEnvironments.length === 0 &&
+    !relayDiscovery.refreshing &&
+    (relayDiscovery.offline || Option.isSome(relayDiscovery.error)) &&
+    [...relayDiscovery.environments.keys()].every(
+      (environmentId) => environmentId === primaryEnvironment?.environmentId,
     );
+  const showAccountError = accountActions.error !== null && !discoveryShowsError;
   // An environment removed from the account on another device keeps its saved
   // row here. That row already offers Retry cleanup, so skip the extra one.
   const cleanupPendingEnvironments = useMemo(() => {

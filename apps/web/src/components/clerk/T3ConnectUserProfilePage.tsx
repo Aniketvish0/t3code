@@ -74,7 +74,7 @@ export function T3ConnectEnvironmentRow(props: {
             <div
               className="rounded-lg border border-input bg-muted/32 px-5 py-4 shadow-xs/5"
               role="group"
-              aria-label={`Confirm removal of ${environment.label}`}
+              aria-label={`Confirm ${environment.cleanupPending ? "cleanup retry" : "removal"} of ${environment.label}`}
             >
               <h4 className="text-[0.8125rem] leading-[1.125rem] font-semibold text-foreground">
                 {environment.cleanupPending ? "Retry cleanup" : "Remove from T3 Connect"}
