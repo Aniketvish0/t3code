@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -108,9 +109,7 @@ function CloudEnvironmentRowsContent(
     refreshDiscovery: () => {
       void controller.refreshRelayEnvironments();
     },
-    removeConnectedEnvironment: (environmentId) => {
-      void controller.removeEnvironment(environmentId);
-    },
+    removeConnectedEnvironment: (environmentId) => controller.removeEnvironment(environmentId),
   });
   const cleanupPendingEnvironments = useMemo(() => {
     if (accountActions.cleanupPendingEnvironments.length === 0) return [];
@@ -328,7 +327,9 @@ interface AccountRemovalTarget {
 function useAccountEnvironmentRemoval(input: {
   readonly enabled: boolean;
   readonly refreshDiscovery: () => void;
-  readonly removeConnectedEnvironment: (environmentId: EnvironmentId) => void;
+  readonly removeConnectedEnvironment: (
+    environmentId: EnvironmentId,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   const accountEnvironments = useManagedRelayEnvironments();
   const removeAccountEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
@@ -391,7 +392,14 @@ function useAccountEnvironmentRemoval(input: {
         // A cleanup retry means the account already dropped this environment
         // earlier. Leave the phone's entry alone; only a fresh removal forgets it.
         if (target.connectedOnDevice && mode === "remove") {
-          inputRef.current.removeConnectedEnvironment(target.environmentId);
+          const forgotten = await inputRef.current.removeConnectedEnvironment(target.environmentId);
+          if (forgotten._tag === "Failure" && !isAtomCommandInterrupted(forgotten)) {
+            const cause = squashAtomCommandFailure(forgotten);
+            Alert.alert(
+              "Removed from account, still saved on this phone",
+              `${cause instanceof Error ? cause.message : "Could not forget the connection."} Turn off its switch to retry.`,
+            );
+          }
         }
         if (result.value.cleanupPending) {
           Alert.alert(

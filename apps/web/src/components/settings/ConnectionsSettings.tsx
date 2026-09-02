@@ -3508,8 +3508,10 @@ export function ConnectionsSettings() {
             onConnect={handleConnectSavedBackend}
             onRemove={handleRemoveSavedBackend}
             accountMenu={
-              environment.relayManaged
-                ? accountActions.menuFor(environment.environmentId, { connectedOnDevice: true })
+              environment.relayManaged || accountActions.isCleanupPending(environment.environmentId)
+                ? accountActions.menuFor(environment.environmentId, {
+                    connectedOnDevice: environment.relayManaged,
+                  })
                 : null
             }
             cleanupPending={accountActions.isCleanupPending(environment.environmentId)}
