@@ -1,6 +1,8 @@
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { ServerIcon } from "lucide-react";
 
+import { cn } from "~/lib/utils";
+
 import { useManagedRelayEnvironmentRemoval } from "../../cloud/useManagedRelayEnvironmentRemoval";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -42,7 +44,12 @@ export function T3ConnectEnvironmentRow(props: {
             <h3 className="truncate text-[0.8125rem] leading-[1.125rem] font-medium text-foreground">
               {environment.label}
             </h3>
-            <p className="mt-1 text-xs leading-[1.125rem] text-muted-foreground">
+            <p
+              className={cn(
+                "mt-1 text-xs leading-[1.125rem]",
+                environment.cleanupPending ? "text-warning" : "text-muted-foreground",
+              )}
+            >
               {environment.cleanupPending
                 ? "Removed from account · Cleanup pending"
                 : `${linkedAtLabel(environment.linkedAt)} · ${endpointLabel(environment)}`}

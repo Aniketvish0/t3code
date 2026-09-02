@@ -131,7 +131,6 @@ import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import {
-  AccountEnvironmentsError,
   CleanupPendingEnvironmentRow,
   useAccountEnvironmentActions,
 } from "../cloud/AccountEnvironmentActions";
@@ -1769,7 +1768,7 @@ function CloudRemoteEnvironmentRows({
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
-  /** True when the section renders other content, such as cleanup rows or an account error. */
+  /** True when the section renders rows that are not saved or discovered. */
   readonly hasOtherRows: boolean;
   readonly accountMenuFor: (environmentId: EnvironmentId) => ReactNode;
 }) {
@@ -3520,7 +3519,7 @@ export function ConnectionsSettings() {
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
-          hasOtherRows={cleanupPendingEnvironments.length > 0 || accountActions.error !== null}
+          hasOtherRows={cleanupPendingEnvironments.length > 0}
           accountMenuFor={(environmentId) =>
             accountActions.menuFor(environmentId, { connectedOnDevice: false })
           }
@@ -3532,9 +3531,6 @@ export function ConnectionsSettings() {
             menu={accountActions.menuFor(environment.environmentId, { connectedOnDevice: false })}
           />
         ))}
-        {accountActions.error ? (
-          <AccountEnvironmentsError error={accountActions.error} refresh={accountActions.refresh} />
-        ) : null}
         {accountActions.dialog}
       </SettingsSection>
     </SettingsPageContainer>
