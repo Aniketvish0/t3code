@@ -167,6 +167,14 @@ With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installe
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 
+## Mobile network changes
+
+When your phone switches between Wi-Fi and cellular while the app is active, T3 Code checks each
+connected environment and reconnects if it does not respond. After reconnecting, the app sends
+your current activity state so provider status and repository updates can resume.
+
+A server at a local network address still requires access to that network.
+
 ## Updating a Remote Server
 
 When the T3 Code web or desktop app and a remote server use different versions, a warning appears in

@@ -80,6 +80,17 @@ Wakeup handling differs by phase, in [supervisor.ts][supervisor]:
   mobile's `application-active-probe`) rather than reconnecting; a healthy
   session survives foregrounding. `application-active-reconnect` skips the probe
   and replaces the lease outright.
+- Mobile emits `network-path-changed` when the active network interface changes
+  while the app is active and online. A connected supervisor probes its current
+  session with a three-second timeout. Other phases ignore this advisory wakeup,
+  so repeated interface changes do not shorten backoff. A failed probe uses the
+  existing immediate reconnect path. It does not request a shell resubscription.
+
+Mobile sends an activity report after each newly connected session generation.
+This restores the server's activity lease if the foreground report failed while
+the socket was down, without waiting for the 25-second reporting interval.
+Reports use the existing 250-millisecond debounce. Generation deduplication is
+per supervisor because replacement supervisors restart their counters.
 
 The UI derives `available`, `offline`, `connecting`, `reconnecting`,
 `connected`, and `error` from supervisor state plus explicit data-sync state.

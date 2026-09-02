@@ -103,13 +103,9 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
       Stream.runForEach(() => Effect.sync(requestReport)),
       Effect.forkScoped,
     );
-    // Re-report on every newly connected session generation. The AppState
-    // report races the reconnect (the RPC fails while the socket is down and
-    // is ignored), so without this the server's lease can lag a resume by up
-    // to REPORT_INTERVAL_MS, keeping provider/VCS work paused. The generation
-    // dedup lives inside the per-supervisor stream because a replacement
-    // supervisor restarts generations; switchMap (default concurrency)
-    // interrupts the previous subscription set on environment changes.
+    // A resume report can fail before the socket reconnects. Report again when
+    // it connects. Each supervisor has its own generation counter, so restart
+    // deduplication when the registry replaces the supervisor.
     const connectedGenerations = (environmentId: EnvironmentId) =>
       registry.followStream(
         environmentId,
@@ -123,10 +119,7 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
           ),
         ),
       );
-    yield* Stream.concat(
-      Stream.fromEffect(SubscriptionRef.get(registry.entries)),
-      SubscriptionRef.changes(registry.entries),
-    ).pipe(
+    yield* SubscriptionRef.changes(registry.entries).pipe(
       Stream.map((entries) => [...entries.keys()].sort()),
       Stream.changesWith((a, b) => a.length === b.length && a.every((id, i) => id === b[i])),
       Stream.switchMap((environmentIds) =>

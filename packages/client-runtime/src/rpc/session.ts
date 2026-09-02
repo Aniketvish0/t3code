@@ -160,9 +160,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
         Effect.asVoid,
       ),
-      // Distinguishes zombie-socket disconnects (missed pong after suspension
-      // or a silent path change) from ordinary closes in logs and telemetry.
-      onPingTimeout: Effect.logInfo("Connection ping timed out; treating the socket as dead.").pipe(
+      // Record missed pongs separately from ordinary socket closes.
+      onPingTimeout: Effect.logInfo("Connection ping timed out.").pipe(
         Effect.annotateLogs({
           environmentId: connection.environmentId,
           connectionLabel: connection.label,

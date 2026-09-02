@@ -47,7 +47,7 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationShellSnapshot = {
   updatedAt: "2026-06-06T00:00:00.000Z",
 };
 
-function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function session(client: WsRpcProtocolClient) {
   return {
     client,
     initialConfig: Effect.succeed({ shellResumeCompletionMarker: true } as never),
@@ -55,7 +55,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
-  };
+  } satisfies RpcSession.RpcSession;
 }
 
 describe("environment shell synchronization", () => {
@@ -263,7 +263,9 @@ describe("environment shell synchronization", () => {
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
-      const activeSession = yield* SubscriptionRef.make(Option.some(session(client)));
+      const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+        Option.some(session(client)),
+      );
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target: TARGET,
         state: supervisorState,

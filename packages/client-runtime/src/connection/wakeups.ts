@@ -6,11 +6,9 @@ export type ConnectionWakeup =
   | "application-active"
   | "application-active-probe"
   | "application-active-reconnect"
-  // Advisory: the network path changed shape (e.g. WiFi to cellular) while
-  // still nominally online. The old socket often survives in appearance only,
-  // so the supervisor probes it instead of waiting for a ping timeout. It is
-  // ignored outside the connected state: a flapping interface must not cut
-  // backoff delays short.
+  // Mobile interface changes can leave the socket open on a dead route.
+  // Probe connected sessions only. Do not shorten backoff or retry blocked
+  // connections for this advisory wakeup.
   | "network-path-changed"
   | "credentials-changed";
 

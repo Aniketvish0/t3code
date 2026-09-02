@@ -109,13 +109,9 @@ const wakeupsLayer = Wakeups.layer({
               backgroundedAtMs = null;
             }
           });
-          // WiFi <-> cellular keeps isConnected true while invalidating the
-          // socket's path, so the coarse online/offline signal never fires.
-          // Emit an advisory wakeup on interface-type changes while active;
-          // the supervisor probes the session rather than blindly replacing
-          // it, which keeps flapping paths cheap. Seed the current type so
-          // the first flip after startup is detected; the listener only
-          // reports changes.
+          // Wi-Fi/cellular changes can keep isConnected true while the socket
+          // stops working. Probe active sessions when the interface changes.
+          // Seed the baseline because the listener only reports changes.
           let networkPath = UNKNOWN_NETWORK_PATH;
           void Network.getNetworkStateAsync()
             .then((current) => {

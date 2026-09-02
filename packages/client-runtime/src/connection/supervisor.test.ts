@@ -1098,7 +1098,10 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("quickly times out a stalled mobile foreground liveness probe", () =>
+  it.effect.each([
+    { reason: "application-active-probe" as const },
+    { reason: "network-path-changed" as const },
+  ])("quickly times out a stalled $reason probe", ({ reason }) =>
     Effect.gen(function* () {
       const probeStarted = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
@@ -1112,7 +1115,7 @@ describe("EnvironmentSupervisor", () => {
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* harness.wake("application-active-probe");
+      yield* harness.wake(reason);
       yield* Deferred.await(probeStarted);
       yield* TestClock.adjust("3 seconds");
       // The timed-out wake probe reconnects immediately without a backoff
