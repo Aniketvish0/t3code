@@ -1821,6 +1821,7 @@ export function ConnectionsSettings() {
     accountActions.error !== null &&
     !(
       savedEnvironments.length === 0 &&
+      relayDiscovery.environments.size === 0 &&
       !relayDiscovery.refreshing &&
       (relayDiscovery.offline || Option.isSome(relayDiscovery.error))
     );
