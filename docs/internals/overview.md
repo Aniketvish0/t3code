@@ -89,14 +89,13 @@ A turn is complete when its session leaves `running` status, projected by
 does not define turn end.
 
 Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
-[`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
+[`ThreadSettlementService`][settlement] sweeps threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
-`thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
-settlement excludes live background work and requires a comparable PR timestamp for immediate PR
-settlement. The command also rejects any later event for its thread after the reactor's snapshot.
-Clients render the persisted settlement state and do not derive settlement from PR or inactivity
-state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
-session.
+`thread.auto-settle` command, which reuses the orchestrator's settle lifecycle. Automatic
+settlement excludes live and blocked work and requires a comparable PR timestamp for immediate PR
+settlement. The command also rejects a thread that changed after the sweep's snapshot or carries
+any explicit settled override. Clients render the persisted settlement state and do not derive
+settlement from PR or inactivity state. Settling detaches the thread's idle provider sessions.
 
 ## Drainable workers
 
@@ -104,7 +103,7 @@ Follow-up work runs asynchronously in queue-backed workers built on [`DrainableW
 [`ProviderRuntimeIngestion`][ingest] normalizes provider runtime streams into orchestration commands,
 [`ProviderCommandReactor`][cmd] dispatches provider calls in response to intent events,
 [`CheckpointReactor`][checkpoint] captures and reverts workspace checkpoints, and
-[`ThreadSettlementReactor`][settlement] evaluates server-owned automatic settlement rules.
+[`ThreadSettlementService`][settlement] evaluates server-owned automatic settlement rules.
 
 `DrainableWorker` pairs a transactional queue with a transactional count of outstanding items.
 `enqueue` atomically offers and increments; processing always decrements. `drain` retries until the
@@ -161,6 +160,6 @@ already dispatch.
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
-[settlement]: ../../apps/server/src/orchestration/ThreadSettlementReactor.ts
+[settlement]: ../../apps/server/src/orchestration-v2/ThreadSettlementService.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
