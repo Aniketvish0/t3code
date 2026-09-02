@@ -124,6 +124,7 @@ import {
   type EnvironmentPresentation,
   useEnvironments,
   usePrimaryEnvironment,
+  useRelayEnvironmentDiscovery,
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
@@ -131,6 +132,7 @@ import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import {
+  AccountEnvironmentsError,
   CleanupPendingEnvironmentRow,
   useAccountEnvironmentActions,
 } from "../cloud/AccountEnvironmentActions";
@@ -1770,7 +1772,7 @@ function CloudRemoteEnvironmentRows({
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
-  /** True when the section renders rows that are not saved or discovered. */
+  /** True when the section renders other content, such as cleanup rows or an account error. */
   readonly hasOtherRows: boolean;
   readonly accountMenuFor: (environmentId: EnvironmentId) => ReactNode;
 }) {
@@ -1812,6 +1814,16 @@ export function ConnectionsSettings() {
         .toSorted((left, right) => left.label.localeCompare(right.label)),
     [environments],
   );
+  const relayDiscovery = useRelayEnvironmentDiscovery();
+  // Discovery renders its own error only when nothing is saved. Show the
+  // account error otherwise, so a failed account query is never silent.
+  const showAccountError =
+    accountActions.error !== null &&
+    !(
+      savedEnvironments.length === 0 &&
+      !relayDiscovery.refreshing &&
+      (relayDiscovery.offline || Option.isSome(relayDiscovery.error))
+    );
   // An environment removed from the account on another device keeps its saved
   // row here. That row already offers Retry cleanup, so skip the extra one.
   const cleanupPendingEnvironments = useMemo(() => {
@@ -3521,7 +3533,7 @@ export function ConnectionsSettings() {
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
-          hasOtherRows={cleanupPendingEnvironments.length > 0}
+          hasOtherRows={cleanupPendingEnvironments.length > 0 || showAccountError}
           accountMenuFor={(environmentId) =>
             accountActions.menuFor(environmentId, { connectedOnDevice: false })
           }
@@ -3533,6 +3545,9 @@ export function ConnectionsSettings() {
             menu={accountActions.menuFor(environment.environmentId, { connectedOnDevice: false })}
           />
         ))}
+        {showAccountError && accountActions.error ? (
+          <AccountEnvironmentsError error={accountActions.error} refresh={accountActions.refresh} />
+        ) : null}
         {accountActions.dialog}
       </SettingsSection>
     </SettingsPageContainer>

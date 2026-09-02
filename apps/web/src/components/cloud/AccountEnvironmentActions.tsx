@@ -38,8 +38,6 @@ interface DialogSelection {
  * the one action that reaches past this device: removing the environment from
  * the signed-in T3 Connect account. It also exposes the account rows whose
  * tunnel cleanup is still pending, since those no longer appear in discovery.
- * Account list failures are logged by the hook and not shown here, because
- * relay discovery already reports a load failure for the same section.
  *
  * Render `dialog` once near the list. Rows get a menu through `menuFor`.
  */
@@ -189,6 +187,8 @@ export function useAccountEnvironmentActions() {
     accountId,
     cleanupPendingEnvironments,
     isCleanupPending,
+    error: environmentsState.error,
+    refresh: environmentsState.refresh,
     menuFor,
     dialog,
   };
@@ -221,6 +221,31 @@ export function CleanupPendingEnvironmentRow({
         </div>
         {menu}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Load failure for the account list. The account query is separate from relay
+ * discovery, so it can fail on its own. Callers hide this row while discovery
+ * shows its own error, so one section never stacks two retry cards.
+ */
+export function AccountEnvironmentsError({
+  error,
+  refresh,
+}: {
+  readonly error: string;
+  readonly refresh: () => void;
+}) {
+  return (
+    <div className={ITEM_ROW_CLASSNAME} role="alert">
+      <p className="text-sm font-medium text-destructive">
+        Could not load T3 Connect account environments
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">{error}</p>
+      <Button className="mt-3" size="sm" variant="outline" onClick={refresh}>
+        Try again
+      </Button>
     </div>
   );
 }
