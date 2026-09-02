@@ -56,11 +56,14 @@ export function CloudEnvironmentConnectRows({
   savedEnvironments,
   showSavedEnvironments = false,
   empty = null,
+  trailingFor,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<SavedCloudEnvironmentConnection>;
   readonly showSavedEnvironments?: boolean;
   readonly empty?: ReactNode;
+  /** Extra control rendered after the Connect button, such as an account menu. */
+  readonly trailingFor?: (environmentId: EnvironmentId) => ReactNode;
 }) {
   const environmentsState = useRelayEnvironmentDiscovery();
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
@@ -240,19 +243,22 @@ export function CloudEnvironmentConnectRows({
               {statusText}
             </p>
           </div>
-          {savedConnection ? (
-            <Button size="sm" variant="outline" disabled>
-              {savedConnection.buttonLabel}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentId !== null}
-              onClick={() => void connectEnvironment(environment)}
-            >
-              {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
-            </Button>
-          )}
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {savedConnection ? (
+              <Button size="sm" variant="outline" disabled>
+                {savedConnection.buttonLabel}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={connectingEnvironmentId !== null}
+                onClick={() => void connectEnvironment(environment)}
+              >
+                {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
+              </Button>
+            )}
+            {trailingFor?.(environment.environmentId)}
+          </div>
         </div>
       </div>
     );

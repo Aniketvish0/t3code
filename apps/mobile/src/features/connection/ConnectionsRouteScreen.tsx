@@ -2,14 +2,8 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
-import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useRef, useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -17,19 +11,6 @@ import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
-import {
-  deregisterManagedRelayEnvironmentCommand,
-  useManagedRelayEnvironments,
-} from "../cloud/managedRelayState";
-import { relayEnvironmentDiscovery } from "../../state/relay";
-import { appAtomRegistry } from "../../state/atom-registry";
-import { useAtomCommand } from "../../state/use-atom-command";
-
-function accountEnvironmentKind(environment: RelayClientEnvironmentRecord): string {
-  return environment.endpoint.providerKind === "cloudflare_tunnel"
-    ? "Managed tunnel"
-    : "Activity publishing only";
-}
 
 export function ConnectionsRouteScreen() {
   const {
@@ -42,92 +23,9 @@ export function ConnectionsRouteScreen() {
   const insets = useSafeAreaInsets();
   const hasEnvironments = connectedEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
-  const accountEnvironments = useManagedRelayEnvironments();
-  const removeAccountEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
-    reportFailure: false,
-  });
-  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
-    reportFailure: false,
-  });
-  const pendingRemovalRef = useRef(new Map<string, EnvironmentId>());
-  const [pendingRemovalByAccount, setPendingRemovalByAccount] = useState<
-    ReadonlyMap<string, EnvironmentId>
-  >(() => new Map());
-  const removingEnvironmentId = accountEnvironments.accountId
-    ? (pendingRemovalByAccount.get(accountEnvironments.accountId) ?? null)
-    : null;
-
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   }, []);
-
-  const removeFromT3Connect = useCallback(
-    async (environment: RelayClientEnvironmentRecord) => {
-      const accountId = accountEnvironments.accountId;
-      if (!accountId || pendingRemovalRef.current.has(accountId)) return;
-      pendingRemovalRef.current.set(accountId, environment.environmentId);
-      setPendingRemovalByAccount((current) => {
-        const next = new Map(current);
-        next.set(accountId, environment.environmentId);
-        return next;
-      });
-      const result = await removeAccountEnvironment({
-        accountId,
-        environmentId: environment.environmentId,
-      });
-      if (pendingRemovalRef.current.get(accountId) === environment.environmentId) {
-        pendingRemovalRef.current.delete(accountId);
-      }
-      setPendingRemovalByAccount((current) => {
-        if (current.get(accountId) !== environment.environmentId) return current;
-        const next = new Map(current);
-        next.delete(accountId);
-        return next;
-      });
-
-      if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
-      if (result._tag === "Success") {
-        accountEnvironments.refresh();
-        void refreshRelayEnvironments();
-        if (result.value.cleanupPending) {
-          Alert.alert(
-            "Environment removed, cleanup pending",
-            "Removed from your account. Tunnel cleanup is pending.",
-          );
-        }
-        return;
-      }
-      if (isAtomCommandInterrupted(result)) return;
-      const cause = squashAtomCommandFailure(result);
-      Alert.alert(
-        "Could not remove environment",
-        cause instanceof Error ? cause.message : "The environment could not be removed.",
-      );
-    },
-    [accountEnvironments, refreshRelayEnvironments, removeAccountEnvironment],
-  );
-
-  const confirmAccountRemoval = useCallback(
-    (environment: RelayClientEnvironmentRecord) => {
-      Alert.alert(
-        environment.cleanupPending
-          ? `Retry cleanup for ${environment.label}?`
-          : `Remove ${environment.label} from T3 Connect?`,
-        environment.cleanupPending
-          ? "This environment is already removed from your account. Stop the running host before retrying tunnel cleanup."
-          : "This removes account access and stops activity publishing. Tunnel cleanup can require the running host to stop. Files, agents, and direct connections are not changed.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: environment.cleanupPending ? "Retry cleanup" : "Remove",
-            style: "destructive",
-            onPress: () => void removeFromT3Connect(environment),
-          },
-        ],
-      );
-    },
-    [removeFromT3Connect],
-  );
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -197,74 +95,6 @@ export function ConnectionsRouteScreen() {
             </Text>
           </View>
         )}
-
-        {accountEnvironments.accountId ? (
-          <View collapsable={false} className="mt-7 gap-2">
-            <Text className="px-1 text-xs font-t3-bold uppercase text-foreground-muted">
-              T3 Connect account
-            </Text>
-            <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-              {accountEnvironments.error ? (
-                <View className="gap-2 px-4 py-4">
-                  <Text className="text-sm text-danger">Could not load account environments</Text>
-                  <Pressable accessibilityRole="button" onPress={accountEnvironments.refresh}>
-                    <Text className="text-sm font-t3-bold text-primary">Try again</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-              {accountEnvironments.data === null ? (
-                accountEnvironments.error ? null : (
-                  <Text className="px-4 py-4 text-sm text-foreground-muted">Loading...</Text>
-                )
-              ) : accountEnvironments.data.length === 0 ? (
-                accountEnvironments.error ? null : (
-                  <Text className="px-4 py-4 text-sm text-foreground-muted">
-                    No environments are registered to this account.
-                  </Text>
-                )
-              ) : (
-                accountEnvironments.data.map((environment, index) => (
-                  <View
-                    key={environment.environmentId}
-                    className={cn(
-                      "flex-row items-center gap-3 px-4 py-3.5",
-                      (accountEnvironments.error || index !== 0) && "border-t border-border",
-                    )}
-                  >
-                    <View className="min-w-0 flex-1 gap-0.5">
-                      <Text className="text-base font-t3-bold text-foreground" numberOfLines={1}>
-                        {environment.label}
-                      </Text>
-                      <Text className="text-xs text-foreground-muted">
-                        {environment.cleanupPending
-                          ? "Cleanup pending"
-                          : accountEnvironmentKind(environment)}
-                      </Text>
-                    </View>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        environment.cleanupPending
-                          ? `Retry cleanup for ${environment.label}`
-                          : `Remove ${environment.label} from T3 Connect`
-                      }
-                      disabled={removingEnvironmentId !== null}
-                      className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70 disabled:opacity-40"
-                      onPress={() => confirmAccountRemoval(environment)}
-                    >
-                      <SymbolView
-                        name={environment.cleanupPending ? "arrow.clockwise" : "trash"}
-                        size={14}
-                        tintColorClassName="accent-danger-foreground"
-                        type="monochrome"
-                      />
-                    </Pressable>
-                  </View>
-                ))
-              )}
-            </View>
-          </View>
-        ) : null}
       </ScrollView>
     </View>
   );

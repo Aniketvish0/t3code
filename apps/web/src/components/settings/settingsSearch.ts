@@ -426,17 +426,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "t3-connect-account",
-    title: "T3 Connect account",
-    to: "/settings/connections",
-    searchTerms: ["cloud registered environments remove unlink tunnel cleanup"],
-    cloudOnly: true,
-  },
-  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: [
+      "add pair backend host code ssh config agent tunnel saved t3 connect account registered remove disconnect cleanup",
+    ],
   },
   {
     id: "archive",

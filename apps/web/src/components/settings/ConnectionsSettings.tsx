@@ -29,7 +29,6 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
-import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -131,7 +130,11 @@ import { serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
-import { ManagedRelayEnvironmentRows } from "../cloud/ManagedRelayEnvironmentRows";
+import {
+  AccountEnvironmentsError,
+  CleanupPendingEnvironmentRow,
+  useAccountEnvironmentActions,
+} from "../cloud/AccountEnvironmentActions";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
@@ -1356,13 +1359,22 @@ type SavedBackendListRowProps = {
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
+  /** Account-level menu for T3 Connect environments. Null when there is none. */
+  accountMenu: ReactNode;
 };
 
+/**
+ * One saved environment on this device. The buttons act on this device only:
+ * Disconnect closes the live connection and keeps the entry, Remove forgets
+ * the entry, Connect opens it again. The trailing menu, when present, holds
+ * the account-wide T3 Connect removal.
+ */
 function SavedBackendListRow({
   environment,
   removingEnvironmentId,
   onConnect,
   onRemove,
+  accountMenu,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
@@ -1416,6 +1428,7 @@ function SavedBackendListRow({
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
     environment.relayManaged ? "T3 Connect" : null,
+    environment.connection.error ? null : connectionStatusText(environment.connection),
   ].filter((value): value is string => value !== null);
 
   // The WSL backend is a desktop-managed local backend (it surfaces as a bearer
@@ -1516,22 +1529,36 @@ function SavedBackendListRow({
                   {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
                 </Button>
               ) : null}
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={isConnecting || removingEnvironmentId === environmentId}
-                onClick={() =>
-                  void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
-                }
-              >
-                {isConnected
-                  ? removingEnvironmentId === environmentId
-                    ? "Disconnecting…"
-                    : "Disconnect"
-                  : isConnecting
-                    ? "Connecting…"
-                    : "Connect"}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={isConnecting || removingEnvironmentId === environmentId}
+                      onClick={() =>
+                        void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
+                      }
+                    />
+                  }
+                >
+                  {isConnected
+                    ? removingEnvironmentId === environmentId
+                      ? "Disconnecting…"
+                      : "Disconnect"
+                    : isConnecting
+                      ? "Connecting…"
+                      : "Connect"}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-72 whitespace-pre-wrap leading-tight">
+                  {isConnected
+                    ? environment.relayManaged
+                      ? "Disconnects this device only. The environment stays on your T3 Connect account."
+                      : "Disconnects and forgets this environment on this device."
+                    : "Connects this device to the environment."}
+                </TooltipPopup>
+              </Tooltip>
+              {accountMenu}
             </>
           )}
         </div>
@@ -1717,11 +1744,11 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyTitle>No remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Click “Add environment” to pair one, or enable T3 Connect on another device and it will show up here."
+            : "Click “Add environment” to pair one."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -1731,15 +1758,18 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  accountMenuFor,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  readonly accountMenuFor: (environmentId: EnvironmentId) => ReactNode;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}
       empty={<EmptyRemoteEnvironments />}
+      trailingFor={accountMenuFor}
     />
   ) : savedEnvironments.length === 0 ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />
@@ -1748,7 +1778,6 @@ function CloudRemoteEnvironmentRows({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
-  const managedRelaySession = useAtomValue(managedRelaySessionAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -1757,6 +1786,7 @@ export function ConnectionsSettings() {
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const accountActions = useAccountEnvironmentActions();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -3389,12 +3419,6 @@ export function ConnectionsSettings() {
         </SettingsSection>
       )}
 
-      {hasCloudPublicConfig() && managedRelaySession ? (
-        <SettingsSection {...searchableSetting("t3-connect-account")}>
-          <ManagedRelayEnvironmentRows />
-        </SettingsSection>
-      ) : null}
-
       <SettingsSection
         {...searchableSetting("remote-environments")}
         headerAction={
@@ -3466,12 +3490,31 @@ export function ConnectionsSettings() {
             removingEnvironmentId={removingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
             onRemove={handleRemoveSavedBackend}
+            accountMenu={
+              environment.relayManaged
+                ? accountActions.menuFor(environment.environmentId, { connectedOnDevice: true })
+                : null
+            }
           />
         ))}
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
+          accountMenuFor={(environmentId) =>
+            accountActions.menuFor(environmentId, { connectedOnDevice: false })
+          }
         />
+        {accountActions.cleanupPendingEnvironments.map((environment) => (
+          <CleanupPendingEnvironmentRow
+            key={environment.environmentId}
+            environment={environment}
+            menu={accountActions.menuFor(environment.environmentId, { connectedOnDevice: false })}
+          />
+        ))}
+        {accountActions.error ? (
+          <AccountEnvironmentsError error={accountActions.error} refresh={accountActions.refresh} />
+        ) : null}
+        {accountActions.dialog}
       </SettingsSection>
     </SettingsPageContainer>
   );

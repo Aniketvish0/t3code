@@ -4,10 +4,17 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
@@ -15,11 +22,18 @@ import {
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { appAtomRegistry } from "../../state/atom-registry";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
+import {
+  deregisterManagedRelayEnvironmentCommand,
+  useManagedRelayEnvironments,
+} from "../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
@@ -47,6 +61,10 @@ interface CloudEnvironmentRowsProps {
  * signed-in account — they are registered on this device and must stay
  * reachable and removable. Only discovery (the available list, refresh, and
  * its errors) requires a signed-in session.
+ *
+ * Each row has two controls with different scopes. The switch connects or
+ * disconnects the environment on this phone only. The trailing menu removes
+ * the environment from the T3 Connect account, which affects every device.
  */
 export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   // Showcase captures run without a Clerk publishable key, so `ClerkProvider`
@@ -82,8 +100,37 @@ function CloudEnvironmentRowsContent(
     ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
     : [];
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
+
+  // Showcase fixtures have no account session, so account actions stay off
+  // there. They also need discovery, which only a signed-in session provides.
+  const accountActions = useAccountEnvironmentRemoval({
+    enabled: discoveryAvailable && props.showcaseSignedIn === undefined,
+    refreshDiscovery: () => {
+      void controller.refreshRelayEnvironments();
+    },
+    removeConnectedEnvironment: (environmentId) => {
+      void controller.removeEnvironment(environmentId);
+    },
+  });
+  const cleanupPendingEnvironments = useMemo(() => {
+    if (accountActions.cleanupPendingEnvironments.length === 0) return [];
+    const listedIds = new Set<EnvironmentId>([
+      ...props.connectedCloudEnvironments.map((environment) => environment.environmentId),
+      ...availableCloudEnvironments.map((environment) => environment.environment.environmentId),
+    ]);
+    return accountActions.cleanupPendingEnvironments.filter(
+      (environment) => !listedIds.has(environment.environmentId),
+    );
+  }, [
+    accountActions.cleanupPendingEnvironments,
+    availableCloudEnvironments,
+    props.connectedCloudEnvironments,
+  ]);
+
   const hasCloudRows =
-    props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
+    props.connectedCloudEnvironments.length > 0 ||
+    availableCloudEnvironments.length > 0 ||
+    cleanupPendingEnvironments.length > 0;
 
   const handleConnectCloudEnvironment = useCallback(
     (entry: RelayEnvironmentView) => controller.connectRelayEnvironment(entry.environment),
@@ -141,6 +188,22 @@ function CloudEnvironmentRowsContent(
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
+              trailing={
+                accountActions.accountId ? (
+                  <AccountActionsMenu
+                    action="remove"
+                    disabled={accountActions.removingEnvironmentId !== null}
+                    label={environment.environmentLabel}
+                    onSelect={() =>
+                      accountActions.confirm("remove", {
+                        environmentId: environment.environmentId,
+                        label: environment.environmentLabel,
+                        connectedOnDevice: true,
+                      })
+                    }
+                  />
+                ) : null
+              }
             />
           ))}
           {availableCloudEnvironments.map((environment, index) => (
@@ -151,6 +214,52 @@ function CloudEnvironmentRowsContent(
               onConnect={() => handleConnectCloudEnvironment(environment)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
+              trailing={
+                accountActions.accountId ? (
+                  <AccountActionsMenu
+                    action="remove"
+                    disabled={accountActions.removingEnvironmentId !== null}
+                    label={environment.environment.label}
+                    onSelect={() =>
+                      accountActions.confirm("remove", {
+                        environmentId: environment.environment.environmentId,
+                        label: environment.environment.label,
+                        connectedOnDevice: false,
+                      })
+                    }
+                  />
+                ) : null
+              }
+            />
+          ))}
+          {cleanupPendingEnvironments.map((environment, index) => (
+            <CloudEnvironmentRowShell
+              key={environment.environmentId}
+              borderTop={
+                props.connectedCloudEnvironments.length > 0 ||
+                availableCloudEnvironments.length > 0 ||
+                index !== 0
+              }
+              connectionError={null}
+              connectionErrorTraceId={null}
+              connectionState="available"
+              errorExpanded={false}
+              label={environment.label}
+              statusText="Removed from account · Cleanup pending"
+              trailing={
+                <AccountActionsMenu
+                  action="cleanup"
+                  disabled={accountActions.removingEnvironmentId !== null}
+                  label={environment.label}
+                  onSelect={() =>
+                    accountActions.confirm("cleanup", {
+                      environmentId: environment.environmentId,
+                      label: environment.label,
+                      connectedOnDevice: false,
+                    })
+                  }
+                />
+              }
             />
           ))}
         </View>
@@ -197,6 +306,174 @@ function CloudEnvironmentRowsContent(
   );
 }
 
+type AccountRemovalMode = "remove" | "cleanup";
+
+interface AccountRemovalTarget {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  /** True when the environment is connected on this phone through T3 Connect. */
+  readonly connectedOnDevice: boolean;
+}
+
+/**
+ * Account-level removal for the T3 Connect rows. Removal revokes the
+ * environment link for every device on the account, so it always asks first.
+ * One removal runs per account at a time, and a result is dropped when the
+ * signed-in account changed while it was in flight.
+ */
+function useAccountEnvironmentRemoval(input: {
+  readonly enabled: boolean;
+  readonly refreshDiscovery: () => void;
+  readonly removeConnectedEnvironment: (environmentId: EnvironmentId) => void;
+}) {
+  const accountEnvironments = useManagedRelayEnvironments();
+  const removeAccountEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const pendingRemovalRef = useRef(new Map<string, EnvironmentId>());
+  const [pendingRemovalByAccount, setPendingRemovalByAccount] = useState<
+    ReadonlyMap<string, EnvironmentId>
+  >(() => new Map());
+  const accountId = input.enabled ? accountEnvironments.accountId : null;
+  const removingEnvironmentId = accountId ? (pendingRemovalByAccount.get(accountId) ?? null) : null;
+  const cleanupPendingEnvironments = useMemo<ReadonlyArray<RelayClientEnvironmentRecord>>(
+    () =>
+      accountId
+        ? (accountEnvironments.data ?? []).filter((environment) => environment.cleanupPending)
+        : [],
+    [accountId, accountEnvironments.data],
+  );
+
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  const refreshAccountEnvironments = accountEnvironments.refresh;
+
+  const run = useCallback(
+    async (mode: AccountRemovalMode, target: AccountRemovalTarget) => {
+      if (!accountId || pendingRemovalRef.current.has(accountId)) return;
+      pendingRemovalRef.current.set(accountId, target.environmentId);
+      setPendingRemovalByAccount((current) => {
+        const next = new Map(current);
+        next.set(accountId, target.environmentId);
+        return next;
+      });
+      const result = await removeAccountEnvironment({
+        accountId,
+        environmentId: target.environmentId,
+      });
+      if (pendingRemovalRef.current.get(accountId) === target.environmentId) {
+        pendingRemovalRef.current.delete(accountId);
+      }
+      setPendingRemovalByAccount((current) => {
+        if (current.get(accountId) !== target.environmentId) return current;
+        const next = new Map(current);
+        next.delete(accountId);
+        return next;
+      });
+
+      if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
+      if (result._tag === "Success") {
+        refreshAccountEnvironments();
+        inputRef.current.refreshDiscovery();
+        if (target.connectedOnDevice) {
+          inputRef.current.removeConnectedEnvironment(target.environmentId);
+        }
+        if (result.value.cleanupPending) {
+          Alert.alert(
+            "Removed from account, cleanup pending",
+            `${target.label} is removed from your account, but its tunnel was not deleted because the host was still running. Stop the host, then use Retry cleanup on its row.`,
+          );
+        }
+        return;
+      }
+      if (isAtomCommandInterrupted(result)) return;
+      const cause = squashAtomCommandFailure(result);
+      Alert.alert(
+        mode === "cleanup" ? "Could not retry cleanup" : "Could not remove environment",
+        cause instanceof Error ? cause.message : "The environment could not be removed.",
+      );
+    },
+    [accountId, refreshAccountEnvironments, removeAccountEnvironment],
+  );
+
+  const confirm = useCallback(
+    (mode: AccountRemovalMode, target: AccountRemovalTarget) => {
+      if (mode === "cleanup") {
+        Alert.alert(
+          "Retry T3 Connect cleanup?",
+          `${target.label} is already removed from your account, but its tunnel was not deleted because the host was still running. Stop the host, then retry.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Retry cleanup", onPress: () => void run(mode, target) },
+          ],
+        );
+        return;
+      }
+      Alert.alert(
+        `Remove ${target.label} from your T3 Connect account?`,
+        "This revokes the environment's T3 Connect link for every device on your account and stops activity publishing to your phone. Files, agents, and direct connections are not changed. Relink from the host to restore it. To stop using it only on this phone, turn off its switch instead.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove from account",
+            style: "destructive",
+            onPress: () => void run(mode, target),
+          },
+        ],
+      );
+    },
+    [run],
+  );
+
+  return { accountId, cleanupPendingEnvironments, confirm, removingEnvironmentId };
+}
+
+const REMOVE_FROM_ACCOUNT_ACTIONS = [
+  {
+    id: "remove",
+    title: "Remove from T3 Connect account",
+    image: "trash",
+    attributes: { destructive: true },
+  },
+];
+
+const RETRY_CLEANUP_ACTIONS = [{ id: "cleanup", title: "Retry cleanup", image: "arrow.clockwise" }];
+
+/**
+ * Trailing ellipsis button on a T3 Connect row. Opens the account-level menu
+ * for that row. While a removal is in flight the button renders disabled
+ * without the menu so no second removal can queue behind it.
+ */
+function AccountActionsMenu(props: {
+  readonly action: AccountRemovalMode;
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly onSelect: () => void;
+}) {
+  const button = (
+    <Pressable
+      accessibilityLabel={`T3 Connect account actions for ${props.label}`}
+      accessibilityRole="button"
+      disabled={props.disabled}
+      className="h-9 w-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-50"
+    >
+      <SymbolView name="ellipsis" size={14} tintColorClassName={"accent-icon"} type="monochrome" />
+    </Pressable>
+  );
+  if (props.disabled) return button;
+  return (
+    <ControlPillMenu
+      actions={props.action === "cleanup" ? RETRY_CLEANUP_ACTIONS : REMOVE_FROM_ACCOUNT_ACTIONS}
+      isAnchoredToRight
+      onPressAction={({ nativeEvent }) => {
+        if (nativeEvent.event === props.action) props.onSelect();
+      }}
+    >
+      {button}
+    </ControlPillMenu>
+  );
+}
+
 function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly borderTop: boolean;
@@ -204,6 +481,7 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onConnect: () => void;
   readonly onDisconnect: () => void;
   readonly onToggleError: () => void;
+  readonly trailing?: ReactNode;
 }) {
   return (
     <CloudEnvironmentRowShell
@@ -221,6 +499,7 @@ function ConnectedCloudEnvironmentRow(props: {
         props.onDisconnect();
       }}
       onToggleError={props.onToggleError}
+      trailing={props.trailing}
       value={props.environment.connectionState !== "available"}
     />
   );
@@ -232,6 +511,7 @@ function CloudEnvironmentRow(props: {
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
   readonly onToggleError: () => void;
+  readonly trailing?: ReactNode;
 }) {
   const presentation = availableCloudEnvironmentPresentation({
     isStatusPending: props.environment.availability === "checking",
@@ -255,11 +535,18 @@ function CloudEnvironmentRow(props: {
       }}
       onToggleError={props.onToggleError}
       statusText={presentation.statusText}
+      trailing={props.trailing}
       value={false}
     />
   );
 }
 
+/**
+ * One T3 Connect row: status dot, label, status text, an optional trailing
+ * control, and the device-level connect switch. The switch is left out when
+ * `onValueChange` is not given, which is the case for rows already removed
+ * from the account.
+ */
 function CloudEnvironmentRowShell(props: {
   readonly borderTop: boolean;
   readonly connectionError: string | null;
@@ -268,10 +555,11 @@ function CloudEnvironmentRowShell(props: {
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
-  readonly onToggleError: () => void;
-  readonly onValueChange: (enabled: boolean) => void;
+  readonly onToggleError?: () => void;
+  readonly onValueChange?: (enabled: boolean) => void;
   readonly statusText?: string;
-  readonly value: boolean;
+  readonly trailing?: ReactNode;
+  readonly value?: boolean;
 }) {
   const isRetrying =
     props.connectionState === "connecting" || props.connectionState === "reconnecting";
@@ -384,11 +672,14 @@ function CloudEnvironmentRowShell(props: {
           ) : null}
         </StatusContainer>
       </View>
-      <ThemedSwitch
-        disabled={props.disabled}
-        onValueChange={props.onValueChange}
-        value={props.value}
-      />
+      {props.trailing}
+      {props.onValueChange ? (
+        <ThemedSwitch
+          disabled={props.disabled}
+          onValueChange={props.onValueChange}
+          value={props.value ?? false}
+        />
+      ) : null}
     </View>
   );
 }

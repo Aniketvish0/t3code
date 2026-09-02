@@ -116,14 +116,14 @@ describe("managed relay environment removal", () => {
       value: { cleanupPending: false },
     });
 
-    await renderRemovalHook().removeEnvironment(environment);
+    await expect(renderRemovalHook().removeEnvironment(environment)).resolves.toBe(true);
 
     expect(testState.environmentsState.refresh).toHaveBeenCalledOnce();
     expect(testState.refreshDiscovery).toHaveBeenCalledOnce();
     expect(testState.toast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "success",
-        title: "Environment removed from T3 Connect",
+        title: "Removed from T3 Connect account",
       }),
     );
   });
@@ -141,7 +141,7 @@ describe("managed relay environment removal", () => {
     const removal = renderRemovalHook().removeEnvironment(environment);
     setSession(nextAccountId);
     result.resolve({ _tag: "Success", value: { cleanupPending: false } });
-    await removal;
+    await expect(removal).resolves.toBe(false);
 
     expect(testState.environmentsState.refresh).not.toHaveBeenCalled();
     expect(testState.refreshDiscovery).not.toHaveBeenCalled();

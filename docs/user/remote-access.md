@@ -220,18 +220,22 @@ Typical uses:
 
 Use `t3 auth --help` and the nested subcommand help pages for the full reference.
 
-### Remove a T3 Connect Environment
+### Disconnect or Remove a T3 Connect Environment
 
 Open **Settings** > **Connections** on web or desktop, or **Settings** > **Environments** on mobile.
-The **T3 Connect account** section lists every environment registered to your account, including
-environments that are offline or not saved on this device. Choose **Remove from T3 Connect** to
-revoke account access and stop activity publishing.
+Every environment on your T3 Connect account appears in the environment list, including
+environments that are offline or not connected on this device. Each row has two kinds of control:
 
-Removal does not need a connection to the environment, so it also works for a server that was wiped
-or is no longer reachable. Files, running agents, saved direct connections, and local sessions are
-not changed. If a running connector blocks tunnel deletion, the row shows **Cleanup pending**.
-Stop the host, then use **Retry cleanup**. To restore T3 Connect later, enable it from the host or
-run `t3 connect link`.
+- **Disconnect** on web and desktop, or the switch on mobile, acts on this device only. The
+  environment stays on your account and you can connect again later.
+- **Remove from T3 Connect account**, in the row's menu, revokes the environment's link for every
+  device on your account and stops activity publishing.
+
+Account removal does not need a connection to the environment, so it also works for a server that
+was wiped or is no longer reachable. Files, running agents, saved direct connections, and local
+sessions are not changed. If a running connector blocks tunnel deletion, the row shows **Removed
+from account · Cleanup pending**. Stop the host, then choose **Retry cleanup** from the row's menu.
+To restore T3 Connect later, enable it from the host or run `t3 connect link`.
 
 ## Security Notes
 

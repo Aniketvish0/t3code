@@ -39,9 +39,14 @@ export function useManagedRelayEnvironmentRemoval() {
     setConfirmingEnvironmentId(null);
   }, [environmentsState.accountId]);
 
-  const removeEnvironment = async (environment: RelayClientEnvironmentRecord) => {
+  /**
+   * Revoke an environment's T3 Connect link for the whole account. Resolves
+   * true when the relay accepted the removal for the account that is still
+   * signed in, so callers can clean up device-local state.
+   */
+  const removeEnvironment = async (environment: RelayClientEnvironmentRecord): Promise<boolean> => {
     const accountId = environmentsState.accountId;
-    if (!accountId || pendingRef.current.has(accountId)) return;
+    if (!accountId || pendingRef.current.has(accountId)) return false;
 
     pendingRef.current.set(accountId, environment.environmentId);
     setPendingByAccount((current) => {
@@ -63,7 +68,7 @@ export function useManagedRelayEnvironmentRemoval() {
       return next;
     });
 
-    if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return;
+    if (appAtomRegistry.get(managedRelaySessionAtom)?.accountId !== accountId) return false;
     if (result._tag === "Success") {
       setConfirmingEnvironmentId(null);
       environmentsState.refresh();
@@ -77,13 +82,13 @@ export function useManagedRelayEnvironmentRemoval() {
             }
           : {
               type: "success",
-              title: "Environment removed from T3 Connect",
+              title: "Removed from T3 Connect account",
               description: `${environment.label} is no longer registered to this account.`,
             },
       );
-      return;
+      return true;
     }
-    if (isAtomCommandInterrupted(result)) return;
+    if (isAtomCommandInterrupted(result)) return false;
 
     const cause = squashAtomCommandFailure(result);
     const message = cause instanceof Error ? cause.message : "Could not remove the environment.";
@@ -109,6 +114,7 @@ export function useManagedRelayEnvironmentRemoval() {
           }
         : undefined,
     });
+    return false;
   };
 
   return {
