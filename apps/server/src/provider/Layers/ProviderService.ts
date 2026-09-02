@@ -1630,10 +1630,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   const runStopAll = Effect.fn("runStopAll")(function* () {
-    yield* Ref.update(turnAnalytics, (state) => {
+    const properties = yield* Ref.modify(turnAnalytics, (state) => {
+      const completed: Array<Readonly<Record<string, unknown>>> = [];
+      for (const [sessionKey, session] of state.sessions) {
+        for (const [turnId, completion] of session.deferredCompletionsByTurnId) {
+          const entry = finishTurnAnalytics(state, { sessionKey, turnId, completion });
+          if (entry) completed.push(entry);
+        }
+      }
       state.sessions.clear();
-      return state;
+      return [completed, state] as const;
     });
+    yield* recordCompletedTurnProperties(properties);
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
     const activeSessions = yield* Effect.forEach(currentAdapters, ([instanceId, adapter]) =>
