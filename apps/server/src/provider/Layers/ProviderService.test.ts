@@ -2548,6 +2548,96 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
     }),
   );
 
+  it.effect("cleans pending metadata when a send is canceled", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-canceled-send");
+      const canceledStarted = yield* Deferred.make<void>();
+      const canceledRelease = yield* Deferred.make<void>();
+      const nextReturnRelease = yield* Deferred.make<void>();
+      const nextTurnId = asTurnId("turn-analytics-after-canceled-send");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      primaryAnalyticsCodex.sendTurn
+        .mockImplementationOnce(() =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(canceledStarted, undefined);
+            yield* Deferred.await(canceledRelease);
+            return { threadId, turnId: asTurnId("turn-analytics-canceled") };
+          }),
+        )
+        .mockImplementationOnce(() =>
+          Effect.gen(function* () {
+            primaryAnalyticsCodex.emit({
+              type: "turn.started",
+              eventId: asEventId("evt-turn-analytics-after-canceled-start"),
+              provider: CODEX_DRIVER,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              turnId: nextTurnId,
+              payload: { model: "native-next", effort: "high" },
+            });
+            primaryAnalyticsCodex.emit({
+              type: "turn.completed",
+              eventId: asEventId("evt-turn-analytics-after-canceled-complete"),
+              provider: CODEX_DRIVER,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              turnId: nextTurnId,
+              payload: { state: "completed" },
+            });
+            yield* Deferred.await(nextReturnRelease);
+            return { threadId, turnId: nextTurnId };
+          }),
+        );
+
+      const canceledSend = yield* provider
+        .sendTurn({
+          threadId,
+          input: "cancel this request",
+          attachments: [],
+          interactionMode: "default",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(canceledStarted);
+      yield* Fiber.interrupt(canceledSend);
+
+      const terminalReceipt = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      const nextSend = yield* provider
+        .sendTurn({
+          threadId,
+          input: "measure the next request",
+          attachments: [],
+          interactionMode: "plan",
+        })
+        .pipe(Effect.forkChild);
+      const terminal = yield* Fiber.join(terminalReceipt);
+      assert.equal(terminal._tag, "Some");
+      assert.equal(nextSend.pollUnsafe(), undefined);
+
+      const completed = recordedTurnAnalytics.eventsByName("provider.turn.completed");
+      assert.equal(completed.length, 1);
+      assert.deepInclude(completed[0]?.properties ?? {}, {
+        model: "native-next",
+        effort: "high",
+        interactionMode: "plan",
+      });
+      yield* Deferred.succeed(nextReturnRelease, undefined);
+      const nextTurn = yield* Fiber.join(nextSend);
+      assert.equal(nextTurn.turnId, nextTurnId);
+    }),
+  );
+
   it.effect("keeps the first metadata when steering reuses a rerouted turn", () =>
     Effect.gen(function* () {
       recordedTurnAnalytics.reset();

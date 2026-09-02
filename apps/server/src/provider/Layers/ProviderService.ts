@@ -29,7 +29,6 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -1095,31 +1094,33 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
       const analyticsModelSelection =
         input.modelSelection?.instanceId === routed.instanceId ? input.modelSelection : undefined;
-      const turnMetadata = yield* beginTurnAnalytics({
-        providerInstanceId: routed.instanceId,
-        provider: routed.adapter.provider,
-        threadId: input.threadId,
-        modelSelection: analyticsModelSelection,
-        interactionMode: input.interactionMode,
-        runtimeMode: routed.runtimeMode,
-      });
-      const turn = yield* routed.adapter.sendTurn(input).pipe(
-        Effect.onExit((exit) =>
-          Exit.isFailure(exit)
-            ? clearPendingTurnAnalytics({
-                providerInstanceId: routed.instanceId,
-                threadId: input.threadId,
-                requestId: turnMetadata.requestId,
-              })
-            : Effect.void,
-        ),
+      const turn = yield* Effect.acquireUseRelease(
+        beginTurnAnalytics({
+          providerInstanceId: routed.instanceId,
+          provider: routed.adapter.provider,
+          threadId: input.threadId,
+          modelSelection: analyticsModelSelection,
+          interactionMode: input.interactionMode,
+          runtimeMode: routed.runtimeMode,
+        }),
+        (turnMetadata) =>
+          Effect.gen(function* () {
+            const turn = yield* routed.adapter.sendTurn(input);
+            yield* associateTurnAnalytics({
+              providerInstanceId: routed.instanceId,
+              threadId: input.threadId,
+              turnId: String(turn.turnId),
+              metadata: turnMetadata,
+            });
+            return turn;
+          }),
+        (turnMetadata) =>
+          clearPendingTurnAnalytics({
+            providerInstanceId: routed.instanceId,
+            threadId: input.threadId,
+            requestId: turnMetadata.requestId,
+          }),
       );
-      yield* associateTurnAnalytics({
-        providerInstanceId: routed.instanceId,
-        threadId: input.threadId,
-        turnId: String(turn.turnId),
-        metadata: turnMetadata,
-      });
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
