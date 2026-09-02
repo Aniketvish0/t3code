@@ -1431,7 +1431,6 @@ function SavedBackendListRow({
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
     environment.relayManaged ? "T3 Connect" : null,
-    cleanupPending ? "Removed from account · Cleanup pending" : null,
     environment.connection.error ? null : connectionStatusText(environment.connection),
   ].filter((value): value is string => value !== null);
 
@@ -1458,9 +1457,10 @@ function SavedBackendListRow({
             <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
           </div>
           {metadataBits.length > 0 ? (
-            <p className={cn("text-xs", cleanupPending ? "text-warning" : "text-muted-foreground")}>
-              {metadataBits.join(" · ")}
-            </p>
+            <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
+          ) : null}
+          {cleanupPending ? (
+            <p className="text-xs text-warning">Removed from account · Cleanup pending</p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
@@ -1769,7 +1769,7 @@ function CloudRemoteEnvironmentRows({
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
-  /** True when the section renders rows that are not saved or discovered. */
+  /** True when the section renders other content, such as cleanup rows or an account error. */
   readonly hasOtherRows: boolean;
   readonly accountMenuFor: (environmentId: EnvironmentId) => ReactNode;
 }) {
@@ -3520,7 +3520,7 @@ export function ConnectionsSettings() {
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
-          hasOtherRows={cleanupPendingEnvironments.length > 0}
+          hasOtherRows={cleanupPendingEnvironments.length > 0 || accountActions.error !== null}
           accountMenuFor={(environmentId) =>
             accountActions.menuFor(environmentId, { connectedOnDevice: false })
           }
