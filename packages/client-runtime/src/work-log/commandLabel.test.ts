@@ -116,6 +116,12 @@ describe("commandProgramName", () => {
     ["cd work |& npm test", "npm"],
     ["cd /tmp && # use the selected workspace\nnpm test", "npm"],
     ["export CI=1; # first note\n# second note\npnpm test", "pnpm"],
+    ["cd&&npm test", "npm"],
+    ["export CI=1;pnpm test", "pnpm"],
+    ["cd ${ROOT:-path;with;semicolons} && bun test", "bun"],
+    ["cd ${ROOT:-path&&fallback} && node app.js", "node"],
+    ["cd @(first|second) && npm test", "npm"],
+    ["cd /tmp \\\n&& npm test", "npm"],
     ["/bin/zsh -lc 'cd apps/web && vp test run'", "vp"],
   ])("skips leading cd commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
@@ -132,6 +138,16 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
+  it.each(
+    ["cd /tmp", "export CI=1", "unset DEBUG", "source env.sh", ". env.sh"].flatMap((setup) =>
+      ["&&", " || ", ";", "\n", "|", " |& ", " & "].map(
+        (operator) => [`${setup}${operator}npm test`, "npm"] as const,
+      ),
+    ),
+  )("handles shell setup followed by every command separator: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
   it.each([
     ["command git status", "git"],
     ["command -p git status", "git"],
@@ -142,6 +158,7 @@ describe("commandProgramName", () => {
     ["exec -cl -a worker node app.js", "node"],
     ["exec env CI=1 /opt/tools/check --verbose", "check"],
     ['exec "C:\\Program Files\\nodejs\\node.exe" app.js', "node.exe"],
+    ["exec sh -c 'cd /tmp && npm test'", "npm"],
   ])("unwraps shell command wrappers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -155,13 +172,69 @@ describe("commandProgramName", () => {
     "exec",
     "exec > output.log",
     "exec --",
+    "exec cd /tmp && npm test",
+    "exec env CI=1 cd /tmp && npm test",
+    "env CI=1 cd /tmp && npm test",
+    "env CI=1; npm test",
+    "sudo cd /tmp && npm test",
+    "cd /tmp <<EOF\nunterminated heredoc",
+    "cd /tmp && >/tmp/log",
+    "(xcrun simctl io booted recordVideo /tmp/video.mp4 &) ; wait",
+    "export CI=1 && (bundle exec pod install || pod install)",
+    "$PY scripts/check.py",
+    "${TOOL} --version",
+    "cd [first|second] && pnpm test",
+    "npm) --version",
     "# comment only",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
   });
 
+  it.each([
+    ["env sh -c 'cd /tmp && npm test'", "npm"],
+    ["sudo zsh -lc 'export CI=1 && pnpm test'", "pnpm"],
+  ])("parses shell setup inside an explicitly launched shell: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
   it("uses the command after leading shell comments", () => {
     expect(commandProgramName("# first comment\n  # second comment\ngit status")).toBe("git");
+  });
+
+  it("skips a shell array assignment before the command", () => {
+    expect(commandProgramName("items=(one two); npm test")).toBe("npm");
+  });
+
+  it.each([
+    ["ROOT=${BASE:-path with spaces}; npm test", "npm"],
+    ["ROOT=`printf 'path with spaces'`; pnpm test", "pnpm"],
+  ])("keeps expansions inside assignment words: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["cd /tmp && >/tmp/log npm test", "npm"],
+    ["cd /tmp && > /tmp/log pnpm test", "pnpm"],
+    ["cd /tmp && 2>&1 bun test", "bun"],
+    ["cd /tmp && 2>& 1 node app.js", "node"],
+    ["cd /tmp && &>/tmp/log git status", "git"],
+    ["cd /tmp && *>>/tmp/log vp test", "vp"],
+    ["cd /tmp && {output}>/tmp/log deno test", "deno"],
+    ["cd /tmp && <<<input ruby script.rb", "ruby"],
+  ])("skips redirections before the next command: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["cd /tmp <<EOF\nnot-a-command\nEOF\nnpm test", "npm"],
+    ["cd /tmp <<'EOF'\nnot-a-command\nEOF\npnpm test", "pnpm"],
+    ["cd /tmp <<'EOF'\nnot-a-command\\\nEOF\npnpm test", "pnpm"],
+    ["cd /tmp <<-EOF\n\tnot-a-command\n\tEOF\nbun test", "bun"],
+    ["cd /tmp <<A <<B\none\nA\ntwo\nB\ngit status", "git"],
+    ["cd /tmp <<EOF; # setup\nnot-a-command\nEOF\nnpm test", "npm"],
+    ["cd /tmp <<EOF && pnpm test\nnot-a-command\nEOF\nbun test", "pnpm"],
+  ])("skips heredoc bodies before finding the next command: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
   });
 
   it.each(["cd apps/web && [ -f package.json ]", "cd apps/web || exit 1", "cd one && cd two"])(

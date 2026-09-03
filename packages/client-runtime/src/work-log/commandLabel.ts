@@ -1,9 +1,12 @@
 type CommandWrapper = "env" | "sudo";
+type CommandProgramContext = "exec" | "shell";
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 const SKIPPABLE_SHELL_SETUP_PROGRAMS = new Set([".", "cd", "export", "source", "unset"]);
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
+const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#";
+const NON_PROGRAM_SUFFIX_CHARACTERS = ")]}`";
 
 // These tokens describe shell syntax or shell-local control flow, not a useful
 // executable name. Falling back to "command" is less misleading than labels
@@ -151,7 +154,9 @@ function tokenizeShellCommand(command: string): string[] | null {
   let current = "";
   let quote: '"' | "'" | null = null;
   let escaping = false;
+  let inBackticks = false;
   let substitutionDepth = 0;
+  let parameterExpansionDepth = 0;
   let tokenStarted = false;
 
   for (let index = 0; index < input.length; index += 1) {
@@ -182,6 +187,12 @@ function tokenizeShellCommand(command: string): string[] | null {
       tokenStarted = true;
       continue;
     }
+    if (inBackticks) {
+      current += character;
+      if (character === "`") inBackticks = false;
+      tokenStarted = true;
+      continue;
+    }
     if (quote !== null) {
       if (character === quote) {
         quote = null;
@@ -191,11 +202,42 @@ function tokenizeShellCommand(command: string): string[] | null {
       tokenStarted = true;
       continue;
     }
+    if (character === "`") {
+      current += character;
+      inBackticks = true;
+      tokenStarted = true;
+      continue;
+    }
+    if (character === "$" && input[index + 1] === "{") {
+      current += "${";
+      parameterExpansionDepth += 1;
+      tokenStarted = true;
+      index += 1;
+      continue;
+    }
+    if (character === "{" && parameterExpansionDepth > 0) {
+      current += character;
+      parameterExpansionDepth += 1;
+      tokenStarted = true;
+      continue;
+    }
+    if (character === "}" && parameterExpansionDepth > 0) {
+      current += character;
+      parameterExpansionDepth -= 1;
+      tokenStarted = true;
+      continue;
+    }
     if (character === "$" && input[index + 1] === "(") {
       current += "$(";
       substitutionDepth += 1;
       tokenStarted = true;
       index += 1;
+      continue;
+    }
+    if (character === "(") {
+      current += character;
+      substitutionDepth += 1;
+      tokenStarted = true;
       continue;
     }
     if (character === ")" && substitutionDepth > 0) {
@@ -210,7 +252,7 @@ function tokenizeShellCommand(command: string): string[] | null {
       continue;
     }
     if (/\s/u.test(character)) {
-      if (substitutionDepth > 0) {
+      if (substitutionDepth > 0 || parameterExpansionDepth > 0) {
         current += character;
         tokenStarted = true;
         continue;
@@ -226,17 +268,108 @@ function tokenizeShellCommand(command: string): string[] | null {
     tokenStarted = true;
   }
 
-  if (quote !== null || escaping || substitutionDepth > 0) return null;
+  if (
+    quote !== null ||
+    escaping ||
+    inBackticks ||
+    substitutionDepth > 0 ||
+    parameterExpansionDepth > 0
+  ) {
+    return null;
+  }
   if (tokenStarted) tokens.push(current);
   return tokens;
 }
 
-function commandAfterFirstShellCommand(command: string): string | null {
+type ShellCommandSplit = {
+  readonly firstCommand: string;
+  readonly remainingCommand: string | null;
+};
+
+type Heredoc = {
+  readonly delimiter: string;
+  readonly stripTabs: boolean;
+};
+
+type ShellSeparator = {
+  readonly index: number;
+  readonly length: number;
+};
+
+function readHeredocDelimiter(
+  command: string,
+  start: number,
+  stripTabs: boolean,
+): { readonly heredoc: Heredoc; readonly end: number } | null {
+  let index = start;
+  while (command[index] === " " || command[index] === "\t") index += 1;
+
+  let delimiter = "";
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+  for (; index < command.length; index += 1) {
+    const character = command[index]!;
+    if (escaping) {
+      delimiter += character;
+      escaping = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaping = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      else delimiter += character;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (/\s/u.test(character) || ";&|<>()".includes(character)) break;
+    delimiter += character;
+  }
+
+  if (!delimiter || quote !== null || escaping) return null;
+  return { heredoc: { delimiter, stripTabs }, end: index };
+}
+
+function commandAfterHeredocs(
+  command: string,
+  start: number,
+  heredocs: ReadonlyArray<Heredoc>,
+): string | null {
+  let cursor = start;
+  for (const heredoc of heredocs) {
+    let foundDelimiter = false;
+    while (cursor <= command.length) {
+      const newlineIndex = command.indexOf("\n", cursor);
+      const lineEnd = newlineIndex === -1 ? command.length : newlineIndex;
+      const line = command.slice(cursor, lineEnd).replace(/\r$/u, "");
+      const comparableLine = heredoc.stripTabs ? line.replace(/^\t+/u, "") : line;
+      cursor = newlineIndex === -1 ? command.length : newlineIndex + 1;
+      if (comparableLine === heredoc.delimiter) {
+        foundDelimiter = true;
+        break;
+      }
+      if (newlineIndex === -1) break;
+    }
+    if (!foundDelimiter) return null;
+  }
+
+  return command.slice(cursor).trim() || null;
+}
+
+function splitFirstShellCommand(command: string): ShellCommandSplit {
   let quote: '"' | "'" | null = null;
   let escaping = false;
   let inBackticks = false;
   let inComment = false;
   let substitutionDepth = 0;
+  let parameterExpansionDepth = 0;
+  const heredocs: Heredoc[] = [];
+  let separatorBeforeHeredocs: ShellSeparator | null = null;
 
   for (let index = 0; index < command.length; index += 1) {
     const character = command[index]!;
@@ -275,12 +408,20 @@ function commandAfterFirstShellCommand(command: string): string | null {
       inComment = true;
       continue;
     }
-    if (
-      character === "(" &&
-      (substitutionDepth > 0 ||
-        command[index - 1] === "$" ||
-        /[<>]/u.test(command[index - 1] ?? ""))
-    ) {
+    if (character === "$" && command[index + 1] === "{") {
+      parameterExpansionDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (character === "{" && parameterExpansionDepth > 0) {
+      parameterExpansionDepth += 1;
+      continue;
+    }
+    if (character === "}" && parameterExpansionDepth > 0) {
+      parameterExpansionDepth -= 1;
+      continue;
+    }
+    if (character === "(") {
       substitutionDepth += 1;
       continue;
     }
@@ -288,7 +429,18 @@ function commandAfterFirstShellCommand(command: string): string | null {
       substitutionDepth -= 1;
       continue;
     }
-    if (substitutionDepth > 0) continue;
+    if (substitutionDepth > 0 || parameterExpansionDepth > 0) continue;
+
+    if (character === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+      const stripTabs = command[index + 2] === "-";
+      const delimiter = readHeredocDelimiter(command, index + (stripTabs ? 3 : 2), stripTabs);
+      if (delimiter === null) {
+        return { firstCommand: command.trim(), remainingCommand: null };
+      }
+      heredocs.push(delimiter.heredoc);
+      index = delimiter.end - 1;
+      continue;
+    }
 
     const isDoubleOperator =
       (character === "&" && command[index + 1] === "&") ||
@@ -298,13 +450,35 @@ function commandAfterFirstShellCommand(command: string): string | null {
       (command[index - 1] === ">" || command[index - 1] === "<" || command[index + 1] === ">");
     if ((!isDoubleOperator && !";&|\n".includes(character)) || isRedirectionAmpersand) continue;
 
+    if (character === "\n" && heredocs.length > 0) {
+      const separator = separatorBeforeHeredocs;
+      const firstCommand = command.slice(0, separator?.index ?? index).trimStart();
+      const commandBeforeHeredocs = separator
+        ? command.slice(separator.index + separator.length, index).trim()
+        : "";
+      const commandFollowingHeredocs = commandAfterHeredocs(command, index + 1, heredocs);
+      const remainingCommand = [commandBeforeHeredocs, commandFollowingHeredocs]
+        .filter((part): part is string => Boolean(part))
+        .join("\n");
+      return {
+        firstCommand,
+        remainingCommand: remainingCommand || null,
+      };
+    }
+    if (heredocs.length > 0) {
+      separatorBeforeHeredocs ??= { index, length: isDoubleOperator ? 2 : 1 };
+      if (isDoubleOperator) index += 1;
+      continue;
+    }
+
+    const firstCommand = command.slice(0, index).trimStart();
     let nextCommandIndex = index + (isDoubleOperator ? 2 : 1);
     while (/\s/u.test(command[nextCommandIndex] ?? "")) nextCommandIndex += 1;
     const nextCommand = command.slice(nextCommandIndex).trim();
-    return nextCommand || null;
+    return { firstCommand, remainingCommand: nextCommand || null };
   }
 
-  return null;
+  return { firstCommand: command.trim(), remainingCommand: null };
 }
 
 function commandWithoutLeadingShellComments(command: string): string | null {
@@ -315,6 +489,53 @@ function commandWithoutLeadingShellComments(command: string): string | null {
     remainingCommand = remainingCommand.slice(newlineIndex + 1).trimStart();
   }
   return remainingCommand || null;
+}
+
+function withoutShellLineContinuations(command: string): string {
+  let normalizedCommand = "";
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+    if (escaping) {
+      normalizedCommand += character;
+      escaping = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      if (command[index + 1] === "\n") {
+        index += 1;
+        continue;
+      }
+      if (command[index + 1] === "\r" && command[index + 2] === "\n") {
+        index += 2;
+        continue;
+      }
+      normalizedCommand += character;
+      escaping = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    }
+    normalizedCommand += character;
+  }
+
+  return normalizedCommand;
+}
+
+function indexAfterShellRedirection(tokens: ReadonlyArray<string>, index: number): number | null {
+  const token = tokens[index];
+  if (!token || /^[<>]\(/u.test(token)) return null;
+  const match = token.match(
+    /^(?:(?:(?:\d+|\*|\{[A-Za-z_][A-Za-z0-9_]*\})?(?:<<<|<<-|<<|<>|>>|>\||<&|>&|<|>))|&>>|&>)(.*)$/u,
+  );
+  if (!match) return null;
+  if (match[1]) return index + 1;
+  return tokens[index + 1] === undefined ? tokens.length + 1 : index + 2;
 }
 
 function serializeShellTokens(tokens: ReadonlyArray<string>): string {
@@ -366,28 +587,50 @@ function wrappedShellCommandProgramName(
 
   const wrappedTokens = tokens.slice(index);
   if (wrappedTokens.length === 0 || /^\d*(?:>|<)/u.test(wrappedTokens[0]!)) return null;
-  return commandProgramName(serializeShellTokens(wrappedTokens), depth + 1);
+  return commandProgramNameInternal(
+    serializeShellTokens(wrappedTokens),
+    depth + 1,
+    wrapper === "exec" ? "exec" : "shell",
+  );
 }
 
-export function commandProgramName(command: string, depth = 0): string | null {
+function commandProgramNameInternal(
+  command: string,
+  depth: number,
+  context: CommandProgramContext,
+): string | null {
   if (depth >= 8) return null;
   const commandWithoutComments = commandWithoutLeadingShellComments(command);
   if (commandWithoutComments === null) return null;
-  const tokens = tokenizeShellCommand(commandWithoutComments);
+  const commandSplit = splitFirstShellCommand(commandWithoutComments);
+  const tokens = tokenizeShellCommand(withoutShellLineContinuations(commandSplit.firstCommand));
   if (tokens === null) return null;
   let index = 0;
   let wrapper: CommandWrapper | null = null;
+  let executionContext = context;
+  let sawAssignment = false;
+  let sawRedirection = false;
 
   while (index < tokens.length) {
     const token = tokens[index];
     if (!token) return null;
+    const indexAfterRedirection = indexAfterShellRedirection(tokens, index);
+    if (indexAfterRedirection !== null) {
+      if (indexAfterRedirection > tokens.length) return null;
+      sawRedirection = true;
+      index = indexAfterRedirection;
+      continue;
+    }
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+      sawAssignment = true;
       index += 1;
       continue;
     }
+    if (NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "")) return null;
     const tokenProgram = token.split(/[\\/]/).at(-1);
     if (tokenProgram === "env" || tokenProgram === "sudo") {
       wrapper = tokenProgram;
+      executionContext = "exec";
       index += 1;
       continue;
     }
@@ -399,10 +642,16 @@ export function commandProgramName(command: string, depth = 0): string | null {
     if (wrapper !== null && token.startsWith("-")) {
       if (wrapper === "env" && (token === "-S" || token === "--split-string")) {
         const splitCommand = tokens[index + 1];
-        return splitCommand ? commandProgramName(splitCommand, depth + 1) : null;
+        return splitCommand
+          ? commandProgramNameInternal(splitCommand, depth + 1, executionContext)
+          : null;
       }
       if (wrapper === "env" && token.startsWith("--split-string=")) {
-        return commandProgramName(token.slice("--split-string=".length), depth + 1);
+        return commandProgramNameInternal(
+          token.slice("--split-string=".length),
+          depth + 1,
+          executionContext,
+        );
       }
       if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
         if (tokens[index + 1] === undefined) return null;
@@ -441,21 +690,31 @@ export function commandProgramName(command: string, depth = 0): string | null {
       const scriptIndex = shellCommandArgumentIndex(tokens, index + 1);
       if (scriptIndex !== null) {
         const script = tokens[scriptIndex];
-        return script ? commandProgramName(script, depth + 1) : null;
+        return script ? commandProgramNameInternal(script, depth + 1, "shell") : null;
       }
     }
     const normalizedTokenProgram = tokenProgram?.toLowerCase();
+    if (
+      executionContext === "exec" &&
+      normalizedTokenProgram &&
+      (SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram) ||
+        SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram))
+    ) {
+      return null;
+    }
     if (normalizedTokenProgram && SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram)) {
       return wrappedShellCommandProgramName(normalizedTokenProgram, tokens, index + 1, depth);
     }
     if (normalizedTokenProgram && SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram)) {
-      const nextCommand = commandAfterFirstShellCommand(commandWithoutComments);
-      return nextCommand ? commandProgramName(nextCommand, depth + 1) : null;
+      return commandSplit.remainingCommand
+        ? commandProgramNameInternal(commandSplit.remainingCommand, depth + 1, "shell")
+        : null;
     }
     if (
       !tokenProgram ||
       NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram.toLowerCase()) ||
-      "<>(){}[];|&".includes(tokenProgram[0] ?? "") ||
+      NON_PROGRAM_PREFIX_CHARACTERS.includes(tokenProgram[0] ?? "") ||
+      NON_PROGRAM_SUFFIX_CHARACTERS.includes(tokenProgram.at(-1) ?? "") ||
       tokenProgram.endsWith("()")
     ) {
       return null;
@@ -463,5 +722,12 @@ export function commandProgramName(command: string, depth = 0): string | null {
     return tokenProgram || null;
   }
 
+  if (sawAssignment && wrapper === null && !sawRedirection && commandSplit.remainingCommand) {
+    return commandProgramNameInternal(commandSplit.remainingCommand, depth + 1, executionContext);
+  }
   return null;
+}
+
+export function commandProgramName(command: string, depth = 0): string | null {
+  return commandProgramNameInternal(command, depth, "shell");
 }
