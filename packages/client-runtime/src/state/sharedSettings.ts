@@ -66,6 +66,22 @@ export function supportsSharedSettings(environment: EnvironmentPresentation): bo
   );
 }
 
+/**
+ * One line per environment that rejected a settings write, each with its own
+ * reason. Two environments can fail for different reasons (one dropped its
+ * session, one refused the scope), so the reasons are never collapsed.
+ */
+export function describeRejectedSettingsWrites(
+  failed: ReadonlyArray<{ readonly label: string; readonly error: unknown }>,
+): string {
+  return failed
+    .map(
+      ({ label, error }) =>
+        `${label}: ${error instanceof Error ? error.message : "The server rejected the change."}`,
+    )
+    .join("\n");
+}
+
 export interface SharedSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;

@@ -30,6 +30,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  describeRejectedSettingsWrites,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   splitSharedServerPatch,
@@ -374,17 +375,13 @@ function useWriteServerSettings() {
           }
         }),
       );
-      if (failed.length === 0) {
-        return;
+      if (failed.length > 0) {
+        toastManager.add({
+          type: "error",
+          title: "Setting not saved",
+          description: describeRejectedSettingsWrites(failed),
+        });
       }
-      const error = failed[0]?.error;
-      toastManager.add({
-        type: "error",
-        title: "Setting not saved",
-        description: `${failed.map(({ label }) => label).join(", ")}: ${
-          error instanceof Error ? error.message : "The server rejected the change."
-        }`,
-      });
     },
     [persistServerSettings],
   );

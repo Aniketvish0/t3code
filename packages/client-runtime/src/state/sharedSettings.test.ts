@@ -9,6 +9,7 @@ import type {
   EnvironmentPresentation,
 } from "../connection/presentation.ts";
 import {
+  describeRejectedSettingsWrites,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   splitSharedServerPatch,
@@ -186,5 +187,16 @@ describe("supportsSharedSettings", () => {
     expect(supportsSharedSettings(presentation("connecting", true))).toBe(false);
     expect(supportsSharedSettings(presentation("connected", false))).toBe(false);
     expect(supportsSharedSettings(presentation("connected", null))).toBe(false);
+  });
+});
+
+describe("describeRejectedSettingsWrites", () => {
+  it("keeps each environment's own reason", () => {
+    expect(
+      describeRejectedSettingsWrites([
+        { label: "Laptop", error: new Error("Laptop is not connected.") },
+        { label: "Remote Box", error: { _tag: "EnvironmentAuthorizationError" } },
+      ]),
+    ).toBe("Laptop: Laptop is not connected.\nRemote Box: The server rejected the change.");
   });
 });

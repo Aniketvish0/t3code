@@ -45,6 +45,7 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
+  describeRejectedSettingsWrites,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   supportsSharedSettings,
@@ -594,16 +595,9 @@ function AutoSettleSettingsRows() {
           }
         }),
       );
-      if (failed.length === 0) {
-        return;
+      if (failed.length > 0) {
+        Alert.alert("Setting not saved", describeRejectedSettingsWrites(failed));
       }
-      const error = failed[0]?.error;
-      Alert.alert(
-        "Setting not saved",
-        `${failed.map(({ label }) => label).join(", ")}: ${
-          error instanceof Error ? error.message : "The server rejected the change."
-        }`,
-      );
     },
     [updateSettings],
   );
