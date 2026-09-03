@@ -137,54 +137,6 @@ describe("work entry labels", () => {
   });
 
   it.each([
-    "if test -f package.json; then vp test; fi",
-    "[ -f package.json ] && vp test",
-    'for file in *.ts; do echo "$file"; done',
-  ])("uses the generic label for shell syntax: %s", (command) => {
-    const commandEntry = { ...entry, command };
-    expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running command");
-    expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe("Ran command");
-    expect(workEntryDisplayLabel(commandEntry, undefined)).toBe(command);
-  });
-
-  it("uses the first program for a compound command", () => {
-    const commandEntry = { ...entry, command: "git status && rm file && git diff" };
-    expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running git");
-    expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe("Ran git");
-  });
-
-  it("uses the first useful program after a leading cd command", () => {
-    const command = "/bin/zsh -lc 'cd apps/web 2>&1 |& # run focused tests\nvp test run'";
-    const commandEntry = { ...entry, command };
-    expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running vp");
-    expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe("Ran vp");
-    expect(workEntryDisplayLabel(commandEntry, undefined)).toBe(command);
-  });
-
-  it.each([
-    ["source ~/.nvm/nvm.sh && nvm use", "Running nvm", "Ran nvm"],
-    ["export CI=1 && pnpm test", "Running pnpm", "Ran pnpm"],
-    ["exec env CI=1 node app.js", "Running node", "Ran node"],
-  ])(
-    "uses the useful program behind shell setup and wrapper commands: %s",
-    (command, live, settled) => {
-      const commandEntry = { ...entry, command };
-      expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe(live);
-      expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe(settled);
-      expect(workEntryDisplayLabel(commandEntry, undefined)).toBe(command);
-    },
-  );
-
-  it.each(["command -v git", "command -V git", "command -a git"])(
-    "keeps command lookup forms generic: %s",
-    (command) => {
-      const commandEntry = { ...entry, command };
-      expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running command");
-      expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe("Ran command");
-    },
-  );
-
-  it.each([
     ["inProgress", "Running vp", "Running vp"],
     ["completed", "Running vp", "Ran vp"],
     ["failed", "Failed vp", "Failed vp"],

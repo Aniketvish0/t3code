@@ -3,7 +3,6 @@ type CommandProgramContext = "exec" | "shell";
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
-const SKIPPABLE_SHELL_SETUP_PROGRAMS = new Set([".", "cd", "export", "source", "unset"]);
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#!%@:";
@@ -29,31 +28,23 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "break",
   "builtin",
   "caller",
-  "call",
   "case",
-  "catch",
   "cd",
-  "class",
   "command",
   "compgen",
   "complete",
   "compopt",
   "continue",
   "coproc",
-  "data",
   "declare",
-  "define",
   "dirs",
   "disown",
   "do",
   "done",
-  "dynamicparam",
   "elif",
   "else",
-  "elseif",
   "enable",
   "end",
-  "endlocal",
   "esac",
   "eval",
   "exec",
@@ -62,22 +53,14 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "false",
   "fc",
   "fg",
-  "filter",
   "fi",
-  "finally",
   "for",
   "foreach",
-  "from",
   "function",
   "getopts",
-  "goto",
-  "hash",
-  "help",
-  "hidden",
   "history",
   "if",
   "in",
-  "inlinescript",
   "jobs",
   "let",
   "local",
@@ -87,36 +70,27 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "noglob",
   "not",
   "or",
-  "parallel",
-  "param",
   "popd",
-  "process",
   "pushd",
   "read",
   "readarray",
   "readonly",
   "repeat",
-  "rem",
   "return",
   "select",
-  "sequence",
   "set",
-  "setlocal",
   "setopt",
   "shift",
   "shopt",
   "source",
-  "static",
   "switch",
   "suspend",
   "test",
   "then",
-  "throw",
   "time",
   "times",
   "trap",
   "true",
-  "try",
   "type",
   "typeset",
   "ulimit",
@@ -125,11 +99,44 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "until",
   "unset",
   "unsetopt",
-  "using",
-  "var",
   "wait",
   "while",
-  "workflow",
+]);
+
+// Unlike setup builtins, these can make later segments part of control flow or
+// otherwise unreachable, so do not use a later program as the command label.
+const TERMINAL_SHELL_PROGRAMS = new Set([
+  "and",
+  "begin",
+  "break",
+  "case",
+  "continue",
+  "coproc",
+  "do",
+  "done",
+  "elif",
+  "else",
+  "end",
+  "esac",
+  "eval",
+  "exec",
+  "exit",
+  "false",
+  "fi",
+  "for",
+  "foreach",
+  "function",
+  "if",
+  "in",
+  "not",
+  "or",
+  "repeat",
+  "return",
+  "select",
+  "switch",
+  "then",
+  "until",
+  "while",
 ]);
 
 function shellCommandArgumentIndex(tokens: ReadonlyArray<string>, start: number): number | null {
@@ -578,7 +585,7 @@ function indexAfterShellRedirection(tokens: ReadonlyArray<string>, index: number
 }
 
 function serializeShellTokens(tokens: ReadonlyArray<string>): string {
-  return tokens.map((token) => JSON.stringify(token)).join(" ");
+  return tokens.map((token) => `'${token.replaceAll("'", "'\\''")}'`).join(" ");
 }
 
 function wrappedShellCommandProgramName(
@@ -638,7 +645,7 @@ function wrappedShellCommandProgramName(
 
   const wrappedProgram = commandProgramNameInternal(
     serializeShellTokens(wrappedTokens),
-    depth + 1,
+    depth,
     wrapper === "exec" ? "exec" : "shell",
   );
   if (wrappedProgram !== null) return wrappedProgram;
@@ -647,10 +654,11 @@ function wrappedShellCommandProgramName(
     wrapper !== "exec" &&
     target &&
     target === target.toLowerCase() &&
-    SKIPPABLE_SHELL_SETUP_PROGRAMS.has(target) &&
+    NON_DESCRIPTIVE_SHELL_PROGRAMS.has(target) &&
+    !TERMINAL_SHELL_PROGRAMS.has(target) &&
     remainingCommand
   ) {
-    return commandProgramNameInternal(remainingCommand, depth + 1, "shell");
+    return commandProgramNameInternal(remainingCommand, depth, "shell");
   }
   return null;
 }
@@ -687,8 +695,13 @@ function commandProgramNameInternal(
       index += 1;
       continue;
     }
-    if (NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "")) {
-      return null;
+    if (
+      NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
+      !(token.startsWith("$") && token.includes("/"))
+    ) {
+      return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
+        ? commandProgramNameInternal(commandSplit.remainingCommand, depth, executionContext)
+        : null;
     }
     const tokenProgram = token.split(/[\\/]/).at(-1);
     const isUnqualifiedToken = token === tokenProgram;
@@ -757,35 +770,20 @@ function commandProgramNameInternal(
         return script ? commandProgramNameInternal(script, depth + 1, "shell") : null;
       }
     }
-    const normalizedTokenProgram = tokenProgram?.toLowerCase();
-    if (
-      executionContext === "exec" &&
-      isUnqualifiedToken &&
-      normalizedTokenProgram &&
-      (SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram) ||
-        SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram))
-    ) {
-      return null;
-    }
     if (
       executionContext === "shell" &&
       isUnqualifiedToken &&
-      normalizedTokenProgram &&
-      token === normalizedTokenProgram &&
-      SHELL_PRECOMMAND_MODIFIERS.has(normalizedTokenProgram)
+      tokenProgram &&
+      SHELL_PRECOMMAND_MODIFIERS.has(tokenProgram)
     ) {
       index += 1;
-      if (normalizedTokenProgram === "time" && tokens[index] === "-p") index += 1;
+      if (tokenProgram === "time" && tokens[index] === "-p") index += 1;
       if (tokens[index]?.startsWith("-")) return null;
       continue;
     }
-    if (
-      isUnqualifiedToken &&
-      normalizedTokenProgram &&
-      SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram)
-    ) {
+    if (isUnqualifiedToken && tokenProgram && SHELL_COMMAND_WRAPPERS.has(tokenProgram)) {
       return wrappedShellCommandProgramName(
-        normalizedTokenProgram,
+        tokenProgram,
         tokens,
         index + 1,
         depth,
@@ -793,17 +791,18 @@ function commandProgramNameInternal(
       );
     }
     if (
+      executionContext === "shell" &&
       isUnqualifiedToken &&
-      normalizedTokenProgram &&
-      SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram)
+      tokenProgram &&
+      NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram) &&
+      !TERMINAL_SHELL_PROGRAMS.has(tokenProgram) &&
+      commandSplit.remainingCommand
     ) {
-      return commandSplit.remainingCommand
-        ? commandProgramNameInternal(commandSplit.remainingCommand, depth + 1, "shell")
-        : null;
+      return commandProgramNameInternal(commandSplit.remainingCommand, depth, "shell");
     }
     if (
       !tokenProgram ||
-      (isUnqualifiedToken && NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram.toLowerCase())) ||
+      (isUnqualifiedToken && NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram)) ||
       NON_PROGRAM_PREFIX_CHARACTERS.includes(tokenProgram[0] ?? "") ||
       NON_PROGRAM_SUFFIX_CHARACTERS.includes(tokenProgram.at(-1) ?? "") ||
       tokenProgram.endsWith("()")
@@ -814,7 +813,7 @@ function commandProgramNameInternal(
   }
 
   if ((sawAssignment || sawRedirection) && wrapper === null && commandSplit.remainingCommand) {
-    return commandProgramNameInternal(commandSplit.remainingCommand, depth + 1, executionContext);
+    return commandProgramNameInternal(commandSplit.remainingCommand, depth, executionContext);
   }
   return null;
 }

@@ -33,6 +33,9 @@ describe("commandProgramName", () => {
     ["bash -- -c 'git status'", "bash"],
     ["bash --rcfile config.sh", "bash"],
     ["my-shell -c 'git status'", "my-shell"],
+    ["$HOME/.bun/bin/bun test", "bun"],
+    ['"$ANDROID_HOME/emulator/emulator" -list-avds', "emulator"],
+    ["${ROOT}/bin/tool --version", "tool"],
   ])("preserves ordinary programs and actual shell launches: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -141,6 +144,15 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
+  it.each([
+    ["set -eu; npm test", "npm"],
+    ["true && npm test", "npm"],
+    ["test -d node_modules || vp i", "vp"],
+    ["[ -d node_modules ] || vp i", "vp"],
+  ])("skips non-descriptive shell commands before a useful program: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
   it.each(
     ["cd /tmp", "export CI=1", "unset DEBUG", "source env.sh", ". env.sh"].flatMap((setup) =>
       ["&&", " || ", ";", "\n", "|", " |& ", " & "].map(
@@ -164,6 +176,8 @@ describe("commandProgramName", () => {
     ["exec env CI=1 /opt/tools/check --verbose", "check"],
     ['exec "C:\\Program Files\\nodejs\\node.exe" app.js', "node.exe"],
     ["exec sh -c 'cd /tmp && npm test'", "npm"],
+    ["exec sh -c 'cd /tmp\nnpm test'", "npm"],
+    ["exec bash -c 'set -e\nnpm test'", "npm"],
   ])("unwraps shell command wrappers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -194,7 +208,6 @@ describe("commandProgramName", () => {
     "%TOOL% --version",
     "!TOOL! --version",
     "@echo off",
-    "rem comment",
     ":: comment",
     "time -- npm test",
     "time -v npm test",
@@ -205,6 +218,17 @@ describe("commandProgramName", () => {
     "# comment only",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
+  });
+
+  it.each([
+    ["parallel -j4", "parallel"],
+    ["hash --help", "hash"],
+    ["process --help", "process"],
+    ["rem comment", "rem"],
+    ["Exec node app.js", "Exec"],
+    ["CD /tmp && npm test", "CD"],
+  ])("does not hide legitimate or case-distinct program names: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
   });
 
   it.each([
@@ -292,11 +316,28 @@ describe("commandProgramName", () => {
     },
   );
 
+  it.each([
+    "if test -f package.json\nthen\n  npm test\nfi",
+    'for file in *\ndo\n  echo "$file"\ndone',
+    "while true\ndo\n  sleep 1\ndone",
+  ])("does not label commands inside multiline shell control flow: %s", (command) => {
+    expect(commandProgramName(command)).toBeNull();
+  });
+
   it("bounds nested shell unwrapping", () => {
     let command = "git status";
     for (let depth = 0; depth < 9; depth += 1) {
       command = `sh -c '${command.replaceAll("'", "'\\''")}'`;
     }
     expect(commandProgramName(command)).toBeNull();
+  });
+
+  it("does not spend the shell nesting budget on setup commands", () => {
+    const command = [
+      ...Array.from({ length: 10 }, (_, index) => `export VALUE_${index}=configured`),
+      "npm test",
+    ].join("\n");
+
+    expect(commandProgramName(command)).toBe("npm");
   });
 });
