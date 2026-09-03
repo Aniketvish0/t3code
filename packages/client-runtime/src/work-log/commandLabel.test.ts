@@ -110,6 +110,10 @@ describe("commandProgramName", () => {
     ['TMP=$(mktemp -d); cd "$TMP"; npm pack ./package', "npm"],
     ["cd $(find . -type d | head -1) && git status", "git"],
     ["cd `find . -type d | head -1` && node script.js", "node"],
+    ["cd /tmp 2>&1 && npm test", "npm"],
+    ["cd /tmp 2<&0 && pnpm test", "pnpm"],
+    ["cd /tmp &>/dev/null && bun test", "bun"],
+    ["cd work |& npm test", "npm"],
     ["/bin/zsh -lc 'cd apps/web && vp test run'", "vp"],
   ])("skips leading cd commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);

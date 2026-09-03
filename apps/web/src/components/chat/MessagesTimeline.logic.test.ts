@@ -154,7 +154,7 @@ describe("work entry labels", () => {
   });
 
   it("uses the first useful program after a leading cd command", () => {
-    const command = "/bin/zsh -lc 'cd apps/web && vp test run'";
+    const command = "/bin/zsh -lc 'cd apps/web 2>&1 |& vp test run'";
     const commandEntry = { ...entry, command };
     expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running vp");
     expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe("Ran vp");

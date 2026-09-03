@@ -291,8 +291,11 @@ function commandAfterFirstShellCommand(command: string): string | null {
 
     const isDoubleOperator =
       (character === "&" && command[index + 1] === "&") ||
-      (character === "|" && command[index + 1] === "|");
-    if (!isDoubleOperator && !";&|\n".includes(character)) continue;
+      (character === "|" && (command[index + 1] === "|" || command[index + 1] === "&"));
+    const isRedirectionAmpersand =
+      character === "&" &&
+      (command[index - 1] === ">" || command[index - 1] === "<" || command[index + 1] === ">");
+    if ((!isDoubleOperator && !";&|\n".includes(character)) || isRedirectionAmpersand) continue;
 
     let nextCommandIndex = index + (isDoubleOperator ? 2 : 1);
     while (/\s/u.test(command[nextCommandIndex] ?? "")) nextCommandIndex += 1;
