@@ -106,13 +106,13 @@ against an install it has evidence of owning; anything unproven is manual-only (
 false`) and the user is shown the version gap without a command. Ownership is read from the
 resolved executable and its real path (symlinks followed):
 
-| Evidence                                                                                           | Update command                                  | Latest version        |
-| -------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------- |
-| Native installer path (`~/.local/bin/claude`, `~/.codex/packages/standalone/`, `~/.opencode/bin/`) | `<resolved executable> update` / `upgrade`      | npm registry          |
-| Real path in `…/Cellar/<name>/` or `…/Caskroom/<name>/`                                            | `brew upgrade [--cask] <name>`                  | `brew info --json=v2` |
-| Real path in `<prefix>/lib/node_modules/<pkg>/` (or `<prefix>/node_modules/<pkg>/` on Windows)     | `npm install -g --prefix <prefix> <pkg>@latest` | npm registry          |
-| Real path under pnpm's global store / `~/.bun/bin/` / `~/.vite-plus/bin/`                          | `pnpm add -g` / `bun i -g` / `vp i -g`          | npm registry          |
-| Anything else                                                                                      | none                                            | npm registry          |
+| Evidence                                                                                                        | Update command                                  | Latest version        |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------- |
+| Native installer path (`~/.local/bin/claude`, `~/.codex/packages/standalone/`, `~/.opencode/bin/`)              | `<resolved executable> update` / `upgrade`      | npm registry          |
+| Real path in `<brew --prefix>/Cellar/<name>/<version>/` or `…/Caskroom/<name>/<version>/`                       | `brew upgrade [--cask] <name>`                  | `brew info --json=v2` |
+| Real path in `<prefix>/lib/node_modules/<pkg>/` (Windows: `.cmd` shim beside `node_modules/<pkg>/package.json`) | `npm install -g --prefix <prefix> <pkg>@latest` | npm registry          |
+| Real path under pnpm's global store / `~/.bun/bin/` / `~/.vite-plus/bin/`                                       | `pnpm add -g` / `bun i -g` / `vp i -g`          | npm registry          |
+| Anything else                                                                                                   | none                                            | npm registry          |
 
 The npm prefix is pinned because the `npm` on `PATH` can belong to a different Node install than
 the one that owns the provider (nvm, Volta, Vite+). Homebrew is compared against what
