@@ -47,6 +47,119 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBeNull();
   });
 
+  it.each([
+    "if test -f package.json; then vp test; fi",
+    "[ -f package.json ]",
+    "[[ -f package.json ]]",
+    "test -f package.json",
+    'for file in *; do echo "$file"; done',
+    "while true; do sleep 1; done",
+    "until false; do sleep 1; done",
+    "case $name in test) vp test;; esac",
+    'select item in one two; do echo "$item"; done',
+    "function check() { vp test; }",
+    "check() { vp test; }",
+    "{ vp test; }",
+    "(vp test)",
+    "(( count += 1 ))",
+    "! vp test",
+    ":",
+    ". ./script.sh",
+    "source ./script.sh",
+    "eval 'vp test'",
+    "cd packages/client-runtime",
+    "export NODE_ENV=test",
+    "local name=value",
+    "set -e",
+    "alias ll='ls -la'",
+    "repeat 3 echo ok",
+    "and vp test",
+    "return 1",
+    "break",
+    "continue",
+    "true",
+    "false",
+  ])("falls back for shell syntax and internal control commands: %s", (command) => {
+    expect(commandProgramName(command)).toBeNull();
+  });
+
+  it.each([
+    ['rg -n "if|for|while" src', "rg"],
+    ["printf '%s\\n' 'a;b|c'", "printf"],
+    ["node -e \"if (true) console.log('ok')\"", "node"],
+    ["echo '$(git status)'", "echo"],
+    ["vp test && git status", "vp"],
+    ["vp test || git status", "vp"],
+    ["rg needle src | head", "rg"],
+    ["vp test; git status", "vp"],
+    ["vp test &", "vp"],
+    ["vp test\ngit status", "vp"],
+    ['echo "$(git status)"', "echo"],
+    ["echo `git status`", "echo"],
+    ["cat <(rg needle src)", "cat"],
+  ])("uses the first executable-looking program: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["cd packages/client-runtime && vp test run", "vp"],
+    ['cd "a path with spaces"; git status', "git"],
+    ["cd apps/web\npnpm test", "pnpm"],
+    ["cd first && cd second && bun test", "bun"],
+    ["CI=1 cd apps/web && npm test", "npm"],
+    ['TMP=$(mktemp -d); cd "$TMP"; npm pack ./package', "npm"],
+    ["cd $(find . -type d | head -1) && git status", "git"],
+    ["cd `find . -type d | head -1` && node script.js", "node"],
+    ["/bin/zsh -lc 'cd apps/web && vp test run'", "vp"],
+  ])("skips leading cd commands and uses the next useful program: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
+    [". ./.env && pnpm test", "pnpm"],
+    ["export CI=1 && vp test run", "vp"],
+    ["unset DEBUG; node app.js", "node"],
+    ["export CI=1 && cd apps/web && pnpm test", "pnpm"],
+    ["/bin/zsh -lc 'source ~/.nvm/nvm.sh && nvm use'", "nvm"],
+  ])("skips shell setup commands and uses the next useful program: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["command git status", "git"],
+    ["command -p git status", "git"],
+    ["command -- git status", "git"],
+    ["builtin printf ok", "printf"],
+    ["builtin -- echo ok", "echo"],
+    ["exec node app.js", "node"],
+    ["exec -cl -a worker node app.js", "node"],
+    ["exec env CI=1 /opt/tools/check --verbose", "check"],
+    ['exec "C:\\Program Files\\nodejs\\node.exe" app.js', "node.exe"],
+  ])("unwraps shell command wrappers: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    "command -v git",
+    "command -V git",
+    "command -a git",
+    "command -pv git",
+    "builtin -p",
+    "exec",
+    "exec > output.log",
+    "exec --",
+  ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
+    expect(commandProgramName(command)).toBeNull();
+  });
+
+  it.each(["cd apps/web && [ -f package.json ]", "cd apps/web || exit 1", "cd one && cd two"])(
+    "falls back when no useful program follows cd: %s",
+    (command) => {
+      expect(commandProgramName(command)).toBeNull();
+    },
+  );
+
   it("bounds nested shell unwrapping", () => {
     let command = "git status";
     for (let depth = 0; depth < 9; depth += 1) {

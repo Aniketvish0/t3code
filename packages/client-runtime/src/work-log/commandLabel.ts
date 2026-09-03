@@ -2,6 +2,124 @@ type CommandWrapper = "env" | "sudo";
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+const SKIPPABLE_SHELL_SETUP_PROGRAMS = new Set([".", "cd", "export", "source", "unset"]);
+const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
+
+// These tokens describe shell syntax or shell-local control flow, not a useful
+// executable name. Falling back to "command" is less misleading than labels
+// such as "Ran if", "Ran [", or "Ran function".
+const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
+  "!",
+  ".",
+  ":",
+  "[",
+  "[[",
+  "alias",
+  "and",
+  "autoload",
+  "begin",
+  "bg",
+  "bind",
+  "bindkey",
+  "break",
+  "builtin",
+  "caller",
+  "case",
+  "catch",
+  "cd",
+  "class",
+  "command",
+  "compgen",
+  "complete",
+  "compopt",
+  "continue",
+  "coproc",
+  "data",
+  "declare",
+  "define",
+  "dirs",
+  "disown",
+  "do",
+  "done",
+  "dynamicparam",
+  "elif",
+  "else",
+  "elseif",
+  "enable",
+  "end",
+  "esac",
+  "eval",
+  "exec",
+  "exit",
+  "export",
+  "false",
+  "fc",
+  "fg",
+  "filter",
+  "fi",
+  "finally",
+  "for",
+  "foreach",
+  "from",
+  "function",
+  "getopts",
+  "hash",
+  "help",
+  "hidden",
+  "history",
+  "if",
+  "in",
+  "inlinescript",
+  "jobs",
+  "let",
+  "local",
+  "logout",
+  "mapfile",
+  "nocorrect",
+  "not",
+  "or",
+  "parallel",
+  "param",
+  "popd",
+  "process",
+  "pushd",
+  "read",
+  "readarray",
+  "readonly",
+  "repeat",
+  "return",
+  "select",
+  "sequence",
+  "set",
+  "setopt",
+  "shift",
+  "shopt",
+  "source",
+  "static",
+  "switch",
+  "suspend",
+  "test",
+  "then",
+  "throw",
+  "time",
+  "times",
+  "trap",
+  "true",
+  "try",
+  "type",
+  "typeset",
+  "ulimit",
+  "umask",
+  "unalias",
+  "until",
+  "unset",
+  "unsetopt",
+  "using",
+  "var",
+  "wait",
+  "while",
+  "workflow",
+]);
 
 function shellCommandArgumentIndex(tokens: ReadonlyArray<string>, start: number): number | null {
   for (let index = start; index < tokens.length; index += 1) {
@@ -112,6 +230,131 @@ function tokenizeShellCommand(command: string): string[] | null {
   return tokens;
 }
 
+function commandAfterFirstShellCommand(command: string): string | null {
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+  let inBackticks = false;
+  let inComment = false;
+  let substitutionDepth = 0;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+    if (inComment) {
+      if (character !== "\n") continue;
+      inComment = false;
+    }
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaping = true;
+      continue;
+    }
+    if (inBackticks) {
+      if (character === "`") inBackticks = false;
+      continue;
+    }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "`") {
+      inBackticks = true;
+      continue;
+    }
+    if (
+      character === "#" &&
+      (index === 0 || /\s/u.test(command[index - 1]!) || ";&|(".includes(command[index - 1]!))
+    ) {
+      inComment = true;
+      continue;
+    }
+    if (
+      character === "(" &&
+      (substitutionDepth > 0 ||
+        command[index - 1] === "$" ||
+        /[<>]/u.test(command[index - 1] ?? ""))
+    ) {
+      substitutionDepth += 1;
+      continue;
+    }
+    if (character === ")" && substitutionDepth > 0) {
+      substitutionDepth -= 1;
+      continue;
+    }
+    if (substitutionDepth > 0) continue;
+
+    const isDoubleOperator =
+      (character === "&" && command[index + 1] === "&") ||
+      (character === "|" && command[index + 1] === "|");
+    if (!isDoubleOperator && !";&|\n".includes(character)) continue;
+
+    let nextCommandIndex = index + (isDoubleOperator ? 2 : 1);
+    while (/\s/u.test(command[nextCommandIndex] ?? "")) nextCommandIndex += 1;
+    const nextCommand = command.slice(nextCommandIndex).trim();
+    return nextCommand || null;
+  }
+
+  return null;
+}
+
+function serializeShellTokens(tokens: ReadonlyArray<string>): string {
+  return tokens.map((token) => JSON.stringify(token)).join(" ");
+}
+
+function wrappedShellCommandProgramName(
+  wrapper: string,
+  tokens: ReadonlyArray<string>,
+  start: number,
+  depth: number,
+): string | null {
+  let index = start;
+
+  if (wrapper === "command") {
+    while (index < tokens.length) {
+      const option = tokens[index]!;
+      if (option === "--") {
+        index += 1;
+        break;
+      }
+      if (!option.startsWith("-") || option === "-") break;
+      if (option !== "-p") return null;
+      index += 1;
+    }
+  } else if (wrapper === "builtin") {
+    if (tokens[index] === "--") index += 1;
+    else if (tokens[index]?.startsWith("-")) return null;
+  } else if (wrapper === "exec") {
+    while (index < tokens.length) {
+      const option = tokens[index]!;
+      if (option === "--") {
+        index += 1;
+        break;
+      }
+      if (option === "-a") {
+        if (tokens[index + 1] === undefined) return null;
+        index += 2;
+        continue;
+      }
+      if (/^-a.+/u.test(option) || /^-[cl]+$/u.test(option)) {
+        index += 1;
+        continue;
+      }
+      if (option.startsWith("-") && option !== "-") return null;
+      break;
+    }
+  }
+
+  const wrappedTokens = tokens.slice(index);
+  if (wrappedTokens.length === 0 || /^\d*(?:>|<)/u.test(wrappedTokens[0]!)) return null;
+  return commandProgramName(serializeShellTokens(wrappedTokens), depth + 1);
+}
+
 export function commandProgramName(command: string, depth = 0): string | null {
   if (depth >= 8) return null;
   const tokens = tokenizeShellCommand(command);
@@ -184,6 +427,22 @@ export function commandProgramName(command: string, depth = 0): string | null {
         const script = tokens[scriptIndex];
         return script ? commandProgramName(script, depth + 1) : null;
       }
+    }
+    const normalizedTokenProgram = tokenProgram?.toLowerCase();
+    if (normalizedTokenProgram && SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram)) {
+      return wrappedShellCommandProgramName(normalizedTokenProgram, tokens, index + 1, depth);
+    }
+    if (normalizedTokenProgram && SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram)) {
+      const nextCommand = commandAfterFirstShellCommand(command);
+      return nextCommand ? commandProgramName(nextCommand, depth + 1) : null;
+    }
+    if (
+      !tokenProgram ||
+      NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram.toLowerCase()) ||
+      "<>(){}[];|&".includes(tokenProgram[0] ?? "") ||
+      tokenProgram.endsWith("()")
+    ) {
+      return null;
     }
     return tokenProgram || null;
   }
