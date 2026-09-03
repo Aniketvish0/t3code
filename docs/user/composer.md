@@ -97,7 +97,7 @@ open a media preview.
 Videos opened from the file explorer or a file-viewer tab also play inside T3 Code. They
 stream from the environment as needed, rather than downloading the entire video before playback.
 Paths in inline code, such as `/tmp/recording.mp4`, work the same way. Image embeds stay inline;
-video embeds show a player with controls and an option to expand. Visible video previews load
+video embeds show a player with the browser's controls, full screen included. Visible video previews load
 an initial frame when supported, but stay paused until you press Play. Video file references use
 a filmstrip icon.
 
