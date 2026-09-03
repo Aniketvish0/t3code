@@ -134,8 +134,10 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
               mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
             }
             accessibilityState={{ disabled: props.uri === null || props.unavailable === true }}
-            disabled={props.uri === null || props.unavailable === true}
-            onPress={() => setPlaybackUri(props.uri)}
+            // Stays pressable so the long-press menu still opens on a failed or unsigned tile.
+            onPress={() => {
+              if (props.uri !== null && !props.unavailable) setPlaybackUri(props.uri);
+            }}
             className="flex-1 items-center justify-center px-4"
           >
             {!props.unavailable ? (

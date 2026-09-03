@@ -58,7 +58,10 @@ function ResolvedWorkspaceFileImagePreview(props: {
         </Pressable>
       </MediaActionsMenu>
       {loadError !== null ? (
-        <View className="absolute inset-0 items-center justify-center bg-card px-6">
+        <View
+          pointerEvents="none"
+          className="absolute inset-0 items-center justify-center bg-card px-6"
+        >
           <EmptyState title="Image unavailable" detail={loadError} />
         </View>
       ) : null}
