@@ -33,7 +33,7 @@ function NativeVideoPreview(props: {
   const resource = source.type === "media" && "resource" in source ? source.resource : null;
   const preparedConnection = usePreparedConnection(environmentId);
   const assetUrl = useAssetUrlState(environmentId, resource);
-  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
+  const refreshAssetUrl = useEffectEvent(useRefreshAssetUrl(environmentId, resource));
   const name = source.type === "media" ? source.name : source.attachment.name;
   // The first minted URL is kept so a background refresh does not restart playback.
   const resolvedUrl =
@@ -102,7 +102,7 @@ function NativeVideoPreview(props: {
       controller.abort();
       void NativeControls.dismissVideo(identifier).catch(() => undefined);
     };
-  }, [localAttachment, name, source.sourceIdentifier, playbackUrl, identifier, refreshAssetUrl]);
+  }, [localAttachment, name, source.sourceIdentifier, playbackUrl, identifier]);
 
   return null;
 }
