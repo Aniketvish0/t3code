@@ -1480,6 +1480,7 @@ function AssistantMetaTimelineRow({
         message={row.message}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
+        alwaysVisible
       />
     </div>
   );
@@ -1490,18 +1491,23 @@ function AssistantMessageMeta({
   message,
   showCopyButton,
   copyStreaming,
+  alwaysVisible = false,
 }: {
   className?: string;
   message: ChatMessage;
   showCopyButton: boolean;
   copyStreaming: boolean;
+  alwaysVisible?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
 
   return (
     <div
       className={cn(
-        "flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100",
+        "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
+        alwaysVisible
+          ? "opacity-100"
+          : "opacity-0 focus-within:opacity-100 group-hover/assistant:opacity-100",
         className,
       )}
     >
