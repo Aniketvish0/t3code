@@ -83,6 +83,7 @@ import {
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
@@ -1836,9 +1837,6 @@ function ComposerPromptEditorInner({
                 aria-placeholder={placeholder}
                 placeholder={<span />}
                 onKeyDown={(event) => {
-                  const hasHeldModifier =
-                    event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
-
                   if (
                     event.key === "Control" ||
                     event.key === "Meta" ||
@@ -1851,7 +1849,21 @@ function ComposerPromptEditorInner({
                   if (event.key !== "PageUp" && event.key !== "PageDown") {
                     return;
                   }
-                  if (hasHeldModifier) {
+
+                  const pageScrollKey = getTimelinePageScrollKey({
+                    altKey: event.altKey,
+                    clientHeight: event.currentTarget.clientHeight,
+                    ctrlKey: event.ctrlKey,
+                    defaultPrevented: event.defaultPrevented,
+                    isComposing: event.nativeEvent.isComposing,
+                    key: event.key,
+                    keyCode: event.keyCode,
+                    metaKey: event.metaKey,
+                    scrollHeight: event.currentTarget.scrollHeight,
+                    scrollTop: event.currentTarget.scrollTop,
+                    shiftKey: event.shiftKey,
+                  });
+                  if (!pageScrollKey) {
                     onPageScrollRelease?.();
                     return;
                   }
@@ -1860,7 +1872,7 @@ function ComposerPromptEditorInner({
                   }
 
                   event.preventDefault();
-                  onPageScrollKeyDown(event.key);
+                  onPageScrollKeyDown(pageScrollKey);
                 }}
                 onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
                 onBlur={onPageScrollRelease}

@@ -7,6 +7,51 @@ const PAGE_SCROLL_HOLD_DELAY_MS = PAGE_SCROLL_ANIMATION_MS;
 
 export type PageScrollKey = "PageUp" | "PageDown";
 
+export function getTimelinePageScrollKey({
+  altKey,
+  clientHeight,
+  ctrlKey,
+  defaultPrevented,
+  isComposing,
+  key,
+  keyCode,
+  metaKey,
+  scrollHeight,
+  scrollTop,
+  shiftKey,
+}: {
+  altKey: boolean;
+  clientHeight: number;
+  ctrlKey: boolean;
+  defaultPrevented: boolean;
+  isComposing: boolean;
+  key: string;
+  keyCode: number;
+  metaKey: boolean;
+  scrollHeight: number;
+  scrollTop: number;
+  shiftKey: boolean;
+}): PageScrollKey | null {
+  if (key !== "PageUp" && key !== "PageDown") {
+    return null;
+  }
+  if (
+    defaultPrevented ||
+    isComposing ||
+    keyCode === 229 ||
+    altKey ||
+    ctrlKey ||
+    metaKey ||
+    shiftKey
+  ) {
+    return null;
+  }
+
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+  const editorCanScroll = key === "PageUp" ? scrollTop > 0 : scrollTop < maxScrollTop;
+  return editorCanScroll ? null : key;
+}
+
 type PageScrollContainer = {
   scrollTop: number;
   getBoundingClientRect: () => {
