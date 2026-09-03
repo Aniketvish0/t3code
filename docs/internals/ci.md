@@ -29,3 +29,20 @@ signing only when platform credentials are present. macOS passkey builds additio
 Without the core signing credentials, it still releases unsigned artifacts.
 
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.
+
+## PR trust and Bugbot
+
+The [`PR Vouch`](../../.github/workflows/pr-vouch.yml) workflow labels each PR from the Vouch result.
+It requests a Cursor Bugbot review only when Vouch reports `bot`, `collaborator`, or `vouched`.
+The PR must also be open and ready for review. Each head commit gets at most one request from the
+workflow.
+
+A change to `.github/VOUCHED.td` rechecks every open PR. This bulk check requests Bugbot only for a
+PR that changes to `vouch:trusted`. Existing trusted PRs wait for their next commit. Maintainers can
+also run the workflow for one PR with the `pr_number` workflow input. Manual runs still apply the
+same Vouch check.
+
+Before this workflow reaches `main`, set Cursor Bugbot to **Run only when mentioned** for this
+repository. The API equivalent is `manualTriggerOnly: true`. If automatic reviews stay enabled,
+Cursor can review a trusted PR twice: once from its automatic hook and once from the workflow
+comment.

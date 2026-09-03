@@ -1,6 +1,12 @@
 name: PR Vouch
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to recheck
+        required: true
+        type: number
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   issue_comment:
@@ -28,6 +34,25 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
+            if (context.eventName === "workflow_dispatch") {
+              const issueNumber = Number(context.payload.inputs?.pr_number);
+              if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
+                core.setFailed("pr_number must be a positive integer");
+                return;
+              }
+
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: issueNumber,
+              });
+              core.setOutput(
+                "targets",
+                JSON.stringify([{ number: pr.number, user: pr.user.login }]),
+              );
+              return;
+            }
+
             if (context.eventName === "pull_request_target") {
               const pr = context.payload.pull_request;
               core.setOutput("targets", JSON.stringify([{ number: pr.number, user: pr.user.login }]));
@@ -75,6 +100,19 @@ jobs:
       matrix:
         target: ${{ fromJson(needs.collect-targets.outputs.targets) }}
     steps:
+      - name: Check out workflow helpers
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr-vouch.cjs
+            .github/scripts/pr-vouch.test.cjs
+          sparse-checkout-cone-mode: false
+
+      - name: Test workflow helper
+        run: node --test .github/scripts/pr-vouch.test.cjs
+
       - id: vouch
         name: Check PR author trust
         uses: mitchellh/vouch/action/check-user@v1
@@ -91,6 +129,16 @@ jobs:
           VOUCH_STATUS: ${{ steps.vouch.outputs.status }}
         with:
           script: |
+            const path = require("node:path");
+            const {
+              getBugbotDecision,
+              hasBugbotRequest,
+              renderBugbotRequest,
+            } = require(path.join(
+              process.env.GITHUB_WORKSPACE,
+              ".github/scripts/pr-vouch.cjs",
+            ));
+
             const issueNumber = Number(process.env.PR_NUMBER);
             const status = process.env.VOUCH_STATUS;
             const managedLabels = [
@@ -167,6 +215,7 @@ jobs:
               issue_number: issueNumber,
               per_page: 100,
             });
+            const wasTrusted = currentLabels.some((label) => label.name === "vouch:trusted");
 
             for (const label of currentLabels) {
               if (!managedLabelNames.has(label.name) || label.name === nextLabelName) {
@@ -197,3 +246,44 @@ jobs:
             }
 
             core.info(`PR #${issueNumber}: ${status} -> ${nextLabelName}`);
+
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            });
+            const decisionInput = {
+              status,
+              state: pull.state,
+              draft: pull.draft,
+              eventName: context.eventName,
+              wasTrusted,
+              alreadyRequested: false,
+            };
+            let decision = getBugbotDecision(decisionInput);
+
+            if (decision.trigger) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+              decision = getBugbotDecision({
+                ...decisionInput,
+                alreadyRequested: hasBugbotRequest(comments, pull.head.sha),
+              });
+            }
+
+            if (!decision.trigger) {
+              core.info(`PR #${issueNumber}: skipped Bugbot because ${decision.reason}`);
+              return;
+            }
+
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: renderBugbotRequest(pull.head.sha),
+            });
+            core.info(`PR #${issueNumber}: requested Bugbot at ${comment.html_url}`);
