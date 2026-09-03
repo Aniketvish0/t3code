@@ -188,6 +188,9 @@ describe("commandProgramName", () => {
     "@echo off",
     "rem comment",
     ":: comment",
+    "time -- npm test",
+    "time -v npm test",
+    "coproc worker { npm test; }",
     "cd [first|second] && pnpm test",
     "npm) --version",
     "# comment only",
@@ -199,6 +202,17 @@ describe("commandProgramName", () => {
     ["env sh -c 'cd /tmp && npm test'", "npm"],
     ["sudo zsh -lc 'export CI=1 && pnpm test'", "pnpm"],
   ])("parses shell setup inside an explicitly launched shell: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["coproc npm test", "npm"],
+    ["nocorrect pnpm test", "pnpm"],
+    ["noglob bun test", "bun"],
+    ["time node app.js", "node"],
+    ["time -p deno test", "deno"],
+    ["time nocorrect npm test", "npm"],
+  ])("skips shell precommand modifiers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
