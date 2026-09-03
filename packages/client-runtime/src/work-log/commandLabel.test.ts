@@ -114,6 +114,8 @@ describe("commandProgramName", () => {
     ["cd /tmp 2<&0 && pnpm test", "pnpm"],
     ["cd /tmp &>/dev/null && bun test", "bun"],
     ["cd work |& npm test", "npm"],
+    ["cd /tmp && # use the selected workspace\nnpm test", "npm"],
+    ["export CI=1; # first note\n# second note\npnpm test", "pnpm"],
     ["/bin/zsh -lc 'cd apps/web && vp test run'", "vp"],
   ])("skips leading cd commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
@@ -153,8 +155,13 @@ describe("commandProgramName", () => {
     "exec",
     "exec > output.log",
     "exec --",
+    "# comment only",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
+  });
+
+  it("uses the command after leading shell comments", () => {
+    expect(commandProgramName("# first comment\n  # second comment\ngit status")).toBe("git");
   });
 
   it.each(["cd apps/web && [ -f package.json ]", "cd apps/web || exit 1", "cd one && cd two"])(

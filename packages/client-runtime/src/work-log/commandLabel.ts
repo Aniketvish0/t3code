@@ -10,6 +10,7 @@ const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 // such as "Ran if", "Ran [", or "Ran function".
 const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "!",
+  "#",
   ".",
   ":",
   "[",
@@ -306,6 +307,16 @@ function commandAfterFirstShellCommand(command: string): string | null {
   return null;
 }
 
+function commandWithoutLeadingShellComments(command: string): string | null {
+  let remainingCommand = command.trimStart();
+  while (remainingCommand.startsWith("#")) {
+    const newlineIndex = remainingCommand.indexOf("\n");
+    if (newlineIndex === -1) return null;
+    remainingCommand = remainingCommand.slice(newlineIndex + 1).trimStart();
+  }
+  return remainingCommand || null;
+}
+
 function serializeShellTokens(tokens: ReadonlyArray<string>): string {
   return tokens.map((token) => JSON.stringify(token)).join(" ");
 }
@@ -360,7 +371,9 @@ function wrappedShellCommandProgramName(
 
 export function commandProgramName(command: string, depth = 0): string | null {
   if (depth >= 8) return null;
-  const tokens = tokenizeShellCommand(command);
+  const commandWithoutComments = commandWithoutLeadingShellComments(command);
+  if (commandWithoutComments === null) return null;
+  const tokens = tokenizeShellCommand(commandWithoutComments);
   if (tokens === null) return null;
   let index = 0;
   let wrapper: CommandWrapper | null = null;
@@ -436,7 +449,7 @@ export function commandProgramName(command: string, depth = 0): string | null {
       return wrappedShellCommandProgramName(normalizedTokenProgram, tokens, index + 1, depth);
     }
     if (normalizedTokenProgram && SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram)) {
-      const nextCommand = commandAfterFirstShellCommand(command);
+      const nextCommand = commandAfterFirstShellCommand(commandWithoutComments);
       return nextCommand ? commandProgramName(nextCommand, depth + 1) : null;
     }
     if (
