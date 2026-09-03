@@ -5,7 +5,7 @@ import { Alert, Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { mediaVideoPreviewUri, type VideoPreviewSource } from "../lib/videoPreviewSource";
-import { useAssetUrlState } from "../state/assets";
+import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
 
 export type { VideoPreviewSource } from "../lib/videoPreviewSource";
@@ -33,6 +33,7 @@ function NativeVideoPreview(props: {
   const resource = source.type === "media" && "resource" in source ? source.resource : null;
   const preparedConnection = usePreparedConnection(environmentId);
   const assetUrl = useAssetUrlState(environmentId, resource);
+  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
   const name = source.type === "media" ? source.name : source.attachment.name;
   // The first minted URL is kept so a background refresh does not restart playback.
   const resolvedUrl =
@@ -85,6 +86,8 @@ function NativeVideoPreview(props: {
       }
     })().catch((error: unknown) => {
       if (controller.signal.aborted) return;
+      // AVKit gives no retry, so re-mint now; the cached URL may simply have expired.
+      if (ready) void refreshAssetUrl();
       Alert.alert(
         "Could not open video",
         ready
@@ -99,7 +102,7 @@ function NativeVideoPreview(props: {
       controller.abort();
       void NativeControls.dismissVideo(identifier).catch(() => undefined);
     };
-  }, [localAttachment, name, source.sourceIdentifier, playbackUrl, identifier]);
+  }, [localAttachment, name, source.sourceIdentifier, playbackUrl, identifier, refreshAssetUrl]);
 
   return null;
 }

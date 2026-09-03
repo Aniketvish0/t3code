@@ -94,7 +94,7 @@ opening overlay before presentation.
 The URL is captured once per preview so credential refresh does not restart playback.
 Media actions (copy path, open in file viewer, save or share) belong to the surface that
 opened the video, a long-press on the thumbnail, so the player carries no
-menu. AVKit has no retry; a failed mint alerts and closes, and the next open mints again.
+menu. AVKit has no retry; a failure alerts and closes, re-mints the URL in the background, and the next open plays from the fresh one.
 
 The native presentation promise completes after dismissal. Local draft previews
 hold their file lease until that promise settles. The iOS preview component requests
