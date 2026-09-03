@@ -5,19 +5,7 @@ const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 const SKIPPABLE_SHELL_SETUP_PROGRAMS = new Set([".", "cd", "export", "source", "unset"]);
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
-const SHELL_PRECOMMAND_MODIFIERS = new Set(["coproc", "nocorrect", "noglob", "time"]);
-const SHELL_COMPOUND_COMMAND_STARTERS = new Set([
-  "(",
-  "[[",
-  "{",
-  "case",
-  "for",
-  "function",
-  "if",
-  "select",
-  "until",
-  "while",
-]);
+const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#!%@:";
 const NON_PROGRAM_SUFFIX_CHARACTERS = ")]}`";
 
@@ -728,15 +716,6 @@ function commandProgramNameInternal(
       SHELL_PRECOMMAND_MODIFIERS.has(normalizedTokenProgram)
     ) {
       index += 1;
-      if (
-        normalizedTokenProgram === "coproc" &&
-        /^[A-Za-z_][A-Za-z0-9_]*$/u.test(tokens[index] ?? "") &&
-        SHELL_COMPOUND_COMMAND_STARTERS.has(
-          (tokens[index + 1]?.match(/^(?:\[\[|[({]|[^\s]+)/u)?.[0] ?? "").toLowerCase(),
-        )
-      ) {
-        return null;
-      }
       if (normalizedTokenProgram === "time" && tokens[index] === "-p") index += 1;
       if (tokens[index]?.startsWith("-")) return null;
       continue;

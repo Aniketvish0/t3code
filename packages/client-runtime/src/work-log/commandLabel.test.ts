@@ -190,6 +190,7 @@ describe("commandProgramName", () => {
     ":: comment",
     "time -- npm test",
     "time -v npm test",
+    "coproc npm test",
     "coproc worker { npm test; }",
     "cd [first|second] && pnpm test",
     "npm) --version",
@@ -206,7 +207,6 @@ describe("commandProgramName", () => {
   });
 
   it.each([
-    ["coproc npm test", "npm"],
     ["nocorrect pnpm test", "pnpm"],
     ["noglob bun test", "bun"],
     ["time node app.js", "node"],
