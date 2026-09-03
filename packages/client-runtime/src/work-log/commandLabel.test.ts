@@ -229,7 +229,10 @@ describe("commandProgramName", () => {
 
   it.each([
     ["CI=1 # note\nnpm test", "npm"],
+    ["CI=1 # it's configured\nnpm test", "npm"],
+    ['CI=1 # "unterminated quote\nbun test', "bun"],
     [">/tmp/log # note\npnpm test", "pnpm"],
+    [">/tmp/log # it's configured\ndeno test", "deno"],
   ])("skips comments after commandless shell setup: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });

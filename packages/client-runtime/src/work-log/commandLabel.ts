@@ -303,6 +303,26 @@ type ShellSeparator = {
   readonly length: number;
 };
 
+type ShellCommentRange = {
+  readonly start: number;
+  readonly end: number;
+};
+
+function commandWithoutShellComments(
+  command: string,
+  end: number,
+  comments: ReadonlyArray<ShellCommentRange>,
+): string {
+  let result = "";
+  let cursor = 0;
+  for (const comment of comments) {
+    if (comment.start >= end) break;
+    result += command.slice(cursor, comment.start);
+    cursor = Math.min(comment.end, end);
+  }
+  return result + command.slice(cursor, end);
+}
+
 function readHeredocDelimiter(
   command: string,
   start: number,
@@ -376,6 +396,8 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
   let substitutionDepth = 0;
   let parameterExpansionDepth = 0;
   const heredocs: Heredoc[] = [];
+  const comments: ShellCommentRange[] = [];
+  let commentStart = 0;
   let separatorBeforeHeredocs: ShellSeparator | null = null;
 
   for (let index = 0; index < command.length; index += 1) {
@@ -383,6 +405,7 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
     if (inComment) {
       if (character !== "\n") continue;
       inComment = false;
+      comments.push({ start: commentStart, end: index });
     }
     if (escaping) {
       escaping = false;
@@ -413,6 +436,7 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
       (index === 0 || /\s/u.test(command[index - 1]!) || ";&|(".includes(command[index - 1]!))
     ) {
       inComment = true;
+      commentStart = index;
       continue;
     }
     if (character === "$" && command[index + 1] === "{") {
@@ -459,7 +483,11 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
 
     if (character === "\n" && heredocs.length > 0) {
       const separator = separatorBeforeHeredocs;
-      const firstCommand = command.slice(0, separator?.index ?? index).trimStart();
+      const firstCommand = commandWithoutShellComments(
+        command,
+        separator?.index ?? index,
+        comments,
+      ).trimStart();
       const commandBeforeHeredocs = separator
         ? command.slice(separator.index + separator.length, index).trim()
         : "";
@@ -478,14 +506,18 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
       continue;
     }
 
-    const firstCommand = command.slice(0, index).trimStart();
+    const firstCommand = commandWithoutShellComments(command, index, comments).trimStart();
     let nextCommandIndex = index + (isDoubleOperator ? 2 : 1);
     while (/\s/u.test(command[nextCommandIndex] ?? "")) nextCommandIndex += 1;
     const nextCommand = command.slice(nextCommandIndex).trim();
     return { firstCommand, remainingCommand: nextCommand || null };
   }
 
-  return { firstCommand: command.trim(), remainingCommand: null };
+  if (inComment) comments.push({ start: commentStart, end: command.length });
+  return {
+    firstCommand: commandWithoutShellComments(command, command.length, comments).trim(),
+    remainingCommand: null,
+  };
 }
 
 function commandWithoutLeadingShellComments(command: string): string | null {
@@ -656,17 +688,6 @@ function commandProgramNameInternal(
       continue;
     }
     if (NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "")) {
-      if (
-        token.startsWith("#") &&
-        (sawAssignment || sawRedirection) &&
-        commandSplit.remainingCommand
-      ) {
-        return commandProgramNameInternal(
-          commandSplit.remainingCommand,
-          depth + 1,
-          executionContext,
-        );
-      }
       return null;
     }
     const tokenProgram = token.split(/[\\/]/).at(-1);
