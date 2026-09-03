@@ -17,6 +17,7 @@ describe("commandProgramName", () => {
     ["env CI=1 /bin/zsh -lc '\"/Applications/My Tools/bin/check\" --verbose'", "check"],
     ["bash -lc \"zsh -c 'git status'\"", "git"],
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
+    ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
