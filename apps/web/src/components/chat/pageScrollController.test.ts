@@ -133,6 +133,22 @@ describe("page scroll helpers", () => {
     ).toBe("PageDown");
   });
 
+  test("hands off page keys within a fractional pixel of the composer boundary", () => {
+    expect(
+      getTimelinePageScrollKey(
+        composerPageScrollEvent({
+          key: "PageUp",
+          keyCode: 33,
+          scrollHeight: 600,
+          scrollTop: 0.5,
+        }),
+      ),
+    ).toBe("PageUp");
+    expect(
+      getTimelinePageScrollKey(composerPageScrollEvent({ scrollHeight: 600, scrollTop: 399.5 })),
+    ).toBe("PageDown");
+  });
+
   test("ramps multiplier over time and caps at the max velocity", () => {
     expect(getPageScrollMultiplier(0)).toBe(1);
     expect(getPageScrollMultiplier(PAGE_SCROLL_ACCELERATION_MS / 2)).toBeCloseTo(1.5);
@@ -161,6 +177,8 @@ describe("createPageScrollController", () => {
   test("keeps a single page scroll when the key is tapped", () => {
     const clock = new TestClock();
     const container = {
+      clientHeight: 600,
+      scrollHeight: 1_800,
       scrollTop: 0,
       getBoundingClientRect: () => ({ height: 600 }),
     };
@@ -186,6 +204,8 @@ describe("createPageScrollController", () => {
   test("continues scrolling on hold without repeated keydown events and stops on keyup", () => {
     const clock = new TestClock();
     const container = {
+      clientHeight: 600,
+      scrollHeight: 4_000,
       scrollTop: 0,
       getBoundingClientRect: () => ({ height: 600 }),
     };
@@ -214,7 +234,9 @@ describe("createPageScrollController", () => {
     const started: string[] = [];
     const controller = createPageScrollController({
       getContainer: () => ({
-        scrollTop: 0,
+        clientHeight: 600,
+        scrollHeight: 1_800,
+        scrollTop: 600,
         getBoundingClientRect: () => ({ height: 600 }),
       }),
       getScrollPaddingBottomPx: () => 24,
@@ -226,5 +248,32 @@ describe("createPageScrollController", () => {
     controller.handleKeyDown("PageUp");
 
     expect(started).toEqual(["PageUp"]);
+  });
+
+  test("does not start a page scroll at the timeline boundary", () => {
+    const clock = new TestClock();
+    const started: string[] = [];
+    const container = {
+      clientHeight: 600,
+      scrollHeight: 1_800,
+      scrollTop: 0.5,
+      getBoundingClientRect: () => ({ height: 600 }),
+    };
+    const controller = createPageScrollController({
+      getContainer: () => container,
+      getScrollPaddingBottomPx: () => 24,
+      onScrollStart: (key) => started.push(key),
+      env: clock.env,
+    });
+
+    controller.handleKeyDown("PageUp");
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
+
+    container.scrollTop = container.scrollHeight - container.clientHeight - 0.5;
+    controller.handleKeyDown("PageDown");
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
+
+    expect(started).toEqual([]);
+    expect(container.scrollTop).toBe(1_199.5);
   });
 });

@@ -3,9 +3,27 @@ export const PAGE_SCROLL_ACCELERATION_MS = 400;
 export const PAGE_SCROLL_MAX_MULTIPLIER = 2;
 
 const PAGE_SCROLL_ALIGNMENT_OFFSET_PX = 36;
+const PAGE_SCROLL_BOUNDARY_EPSILON_PX = 1;
 const PAGE_SCROLL_HOLD_DELAY_MS = PAGE_SCROLL_ANIMATION_MS;
 
 export type PageScrollKey = "PageUp" | "PageDown";
+
+type PageScrollMetrics = {
+  clientHeight: number;
+  scrollHeight: number;
+  scrollTop: number;
+};
+
+function canScrollInDirection(
+  { clientHeight, scrollHeight, scrollTop }: PageScrollMetrics,
+  key: PageScrollKey,
+): boolean {
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+  const clampedScrollTop = Math.min(maxScrollTop, Math.max(0, scrollTop));
+  return key === "PageUp"
+    ? clampedScrollTop > PAGE_SCROLL_BOUNDARY_EPSILON_PX
+    : clampedScrollTop < maxScrollTop - PAGE_SCROLL_BOUNDARY_EPSILON_PX;
+}
 
 export function getTimelinePageScrollKey({
   altKey,
@@ -47,13 +65,11 @@ export function getTimelinePageScrollKey({
     return null;
   }
 
-  const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
-  const editorCanScroll = key === "PageUp" ? scrollTop > 0 : scrollTop < maxScrollTop;
+  const editorCanScroll = canScrollInDirection({ clientHeight, scrollHeight, scrollTop }, key);
   return editorCanScroll ? null : key;
 }
 
-type PageScrollContainer = {
-  scrollTop: number;
+type PageScrollContainer = PageScrollMetrics & {
   getBoundingClientRect: () => {
     height: number;
   };
@@ -248,6 +264,10 @@ export function createPageScrollController({
     handleKeyDown(key: PageScrollKey) {
       const container = getContainer();
       if (!container) {
+        return;
+      }
+
+      if (!canScrollInDirection(container, key)) {
         return;
       }
 
