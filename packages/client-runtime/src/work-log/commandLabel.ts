@@ -5,7 +5,7 @@ const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 const SKIPPABLE_SHELL_SETUP_PROGRAMS = new Set([".", "cd", "export", "source", "unset"]);
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
-const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#";
+const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#!%@:";
 const NON_PROGRAM_SUFFIX_CHARACTERS = ")]}`";
 
 // These tokens describe shell syntax or shell-local control flow, not a useful
@@ -28,6 +28,7 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "break",
   "builtin",
   "caller",
+  "call",
   "case",
   "catch",
   "cd",
@@ -51,6 +52,7 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "elseif",
   "enable",
   "end",
+  "endlocal",
   "esac",
   "eval",
   "exec",
@@ -67,6 +69,7 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "from",
   "function",
   "getopts",
+  "goto",
   "hash",
   "help",
   "hidden",
@@ -91,10 +94,12 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "readarray",
   "readonly",
   "repeat",
+  "rem",
   "return",
   "select",
   "sequence",
   "set",
+  "setlocal",
   "setopt",
   "shift",
   "shopt",
@@ -722,7 +727,7 @@ function commandProgramNameInternal(
     return tokenProgram || null;
   }
 
-  if (sawAssignment && wrapper === null && !sawRedirection && commandSplit.remainingCommand) {
+  if ((sawAssignment || sawRedirection) && wrapper === null && commandSplit.remainingCommand) {
     return commandProgramNameInternal(commandSplit.remainingCommand, depth + 1, executionContext);
   }
   return null;

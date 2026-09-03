@@ -183,6 +183,11 @@ describe("commandProgramName", () => {
     "export CI=1 && (bundle exec pod install || pod install)",
     "$PY scripts/check.py",
     "${TOOL} --version",
+    "%TOOL% --version",
+    "!TOOL! --version",
+    "@echo off",
+    "rem comment",
+    ":: comment",
     "cd [first|second] && pnpm test",
     "npm) --version",
     "# comment only",
@@ -213,6 +218,8 @@ describe("commandProgramName", () => {
   });
 
   it.each([
+    [">/tmp/log && npm test", "npm"],
+    ["2>/tmp/error.log; pnpm test", "pnpm"],
     ["cd /tmp && >/tmp/log npm test", "npm"],
     ["cd /tmp && > /tmp/log pnpm test", "pnpm"],
     ["cd /tmp && 2>&1 bun test", "bun"],
