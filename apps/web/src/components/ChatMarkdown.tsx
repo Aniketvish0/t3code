@@ -1269,6 +1269,7 @@ function ChatMarkdownVideo(props: {
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
+  readonly srcFragment?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
@@ -1307,6 +1308,7 @@ function ChatMarkdownVideo(props: {
                     type: "video",
                     autoPlay: false,
                     ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
+                    ...(props.srcFragment ? { srcFragment: props.srcFragment } : {}),
                     ...(props.actionsSource
                       ? { actionsSource: { ...props.actionsSource, src } }
                       : {}),
@@ -1377,6 +1379,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         copyMarkdown={props.copyMarkdown}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
+        srcFragment={props.srcFragment}
         onRetry={refreshAssetUrl}
         onImageExpand={props.onImageExpand}
         actionsSource={actionsSource}
