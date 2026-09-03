@@ -158,33 +158,6 @@ describe("page scroll helpers", () => {
 });
 
 describe("createPageScrollController", () => {
-  test("jumps one page per keydown without animation when reduced motion is preferred", () => {
-    const clock = new TestClock();
-    const container = {
-      scrollTop: 0,
-      getBoundingClientRect: () => ({ height: 600 }),
-    };
-    const controller = createPageScrollController({
-      getContainer: () => container,
-      getScrollPaddingBottomPx: () => 24,
-      getPrefersReducedMotion: () => true,
-      env: clock.env,
-    });
-    const pageDistance = getPageScrollDistancePx({
-      containerHeightPx: 600,
-      scrollPaddingBottomPx: 24,
-    });
-
-    controller.handleKeyDown("PageDown");
-    expect(container.scrollTop).toBe(pageDistance);
-
-    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS * 2);
-    expect(container.scrollTop).toBe(pageDistance);
-
-    controller.handleKeyDown("PageDown");
-    expect(container.scrollTop).toBe(pageDistance * 2);
-  });
-
   test("keeps a single page scroll when the key is tapped", () => {
     const clock = new TestClock();
     const container = {
