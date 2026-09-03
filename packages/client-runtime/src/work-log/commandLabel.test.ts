@@ -107,6 +107,8 @@ describe("commandProgramName", () => {
     ["cd apps/web\npnpm test", "pnpm"],
     ["cd first && cd second && bun test", "bun"],
     ["CI=1 cd apps/web && npm test", "npm"],
+    ["PATH+=:/tools npm test", "npm"],
+    ["PATH+=:/tools && npm test", "npm"],
     ['TMP=$(mktemp -d); cd "$TMP"; npm pack ./package', "npm"],
     ["cd $(find . -type d | head -1) && git status", "git"],
     ["cd `find . -type d | head -1` && node script.js", "node"],
@@ -154,6 +156,8 @@ describe("commandProgramName", () => {
     ["command -- git status", "git"],
     ["builtin printf ok", "printf"],
     ["builtin -- echo ok", "echo"],
+    ["command cd /tmp && npm test", "npm"],
+    ["builtin cd /tmp && pnpm test", "pnpm"],
     ["exec node app.js", "node"],
     ["exec -cl -a worker node app.js", "node"],
     ["exec env CI=1 /opt/tools/check --verbose", "check"],
@@ -174,9 +178,12 @@ describe("commandProgramName", () => {
     "exec --",
     "exec cd /tmp && npm test",
     "exec env CI=1 cd /tmp && npm test",
+    "exec CI=1 npm test",
     "env CI=1 cd /tmp && npm test",
     "env CI=1; npm test",
     "sudo cd /tmp && npm test",
+    "command CI=1 npm test",
+    "command false && npm test",
     "cd /tmp <<EOF\nunterminated heredoc",
     "cd /tmp && >/tmp/log",
     "(xcrun simctl io booted recordVideo /tmp/video.mp4 &) ; wait",
@@ -218,6 +225,22 @@ describe("commandProgramName", () => {
 
   it("uses the command after leading shell comments", () => {
     expect(commandProgramName("# first comment\n  # second comment\ngit status")).toBe("git");
+  });
+
+  it.each([
+    ["CI=1 # note\nnpm test", "npm"],
+    [">/tmp/log # note\npnpm test", "pnpm"],
+  ])("skips comments after commandless shell setup: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["./cd /tmp && npm test", "cd"],
+    ["/opt/exec node app.js", "exec"],
+    ["/usr/bin/time npm test", "time"],
+    ["/usr/bin/test -f package.json", "test"],
+  ])("does not treat qualified paths as shell syntax: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
   });
 
   it("skips a shell array assignment before the command", () => {

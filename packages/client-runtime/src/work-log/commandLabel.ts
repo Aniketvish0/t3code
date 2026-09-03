@@ -554,6 +554,7 @@ function wrappedShellCommandProgramName(
   tokens: ReadonlyArray<string>,
   start: number,
   depth: number,
+  remainingCommand: string | null,
 ): string | null {
   let index = start;
 
@@ -593,12 +594,33 @@ function wrappedShellCommandProgramName(
   }
 
   const wrappedTokens = tokens.slice(index);
-  if (wrappedTokens.length === 0 || /^\d*(?:>|<)/u.test(wrappedTokens[0]!)) return null;
-  return commandProgramNameInternal(
+  if (wrappedTokens.length === 0) return null;
+  let targetIndex = 0;
+  while (targetIndex < wrappedTokens.length) {
+    const indexAfterRedirection = indexAfterShellRedirection(wrappedTokens, targetIndex);
+    if (indexAfterRedirection === null || indexAfterRedirection > wrappedTokens.length) break;
+    targetIndex = indexAfterRedirection;
+  }
+  const target = wrappedTokens[targetIndex];
+  if (target && /^[A-Za-z_][A-Za-z0-9_]*\+?=/u.test(target)) return null;
+
+  const wrappedProgram = commandProgramNameInternal(
     serializeShellTokens(wrappedTokens),
     depth + 1,
     wrapper === "exec" ? "exec" : "shell",
   );
+  if (wrappedProgram !== null) return wrappedProgram;
+
+  if (
+    wrapper !== "exec" &&
+    target &&
+    target === target.toLowerCase() &&
+    SKIPPABLE_SHELL_SETUP_PROGRAMS.has(target) &&
+    remainingCommand
+  ) {
+    return commandProgramNameInternal(remainingCommand, depth + 1, "shell");
+  }
+  return null;
 }
 
 function commandProgramNameInternal(
@@ -628,13 +650,27 @@ function commandProgramNameInternal(
       index = indexAfterRedirection;
       continue;
     }
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(token)) {
       sawAssignment = true;
       index += 1;
       continue;
     }
-    if (NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "")) return null;
+    if (NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "")) {
+      if (
+        token.startsWith("#") &&
+        (sawAssignment || sawRedirection) &&
+        commandSplit.remainingCommand
+      ) {
+        return commandProgramNameInternal(
+          commandSplit.remainingCommand,
+          depth + 1,
+          executionContext,
+        );
+      }
+      return null;
+    }
     const tokenProgram = token.split(/[\\/]/).at(-1);
+    const isUnqualifiedToken = token === tokenProgram;
     if (tokenProgram === "env" || tokenProgram === "sudo") {
       wrapper = tokenProgram;
       executionContext = "exec";
@@ -703,6 +739,7 @@ function commandProgramNameInternal(
     const normalizedTokenProgram = tokenProgram?.toLowerCase();
     if (
       executionContext === "exec" &&
+      isUnqualifiedToken &&
       normalizedTokenProgram &&
       (SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram) ||
         SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram))
@@ -711,6 +748,7 @@ function commandProgramNameInternal(
     }
     if (
       executionContext === "shell" &&
+      isUnqualifiedToken &&
       normalizedTokenProgram &&
       token === normalizedTokenProgram &&
       SHELL_PRECOMMAND_MODIFIERS.has(normalizedTokenProgram)
@@ -720,17 +758,31 @@ function commandProgramNameInternal(
       if (tokens[index]?.startsWith("-")) return null;
       continue;
     }
-    if (normalizedTokenProgram && SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram)) {
-      return wrappedShellCommandProgramName(normalizedTokenProgram, tokens, index + 1, depth);
+    if (
+      isUnqualifiedToken &&
+      normalizedTokenProgram &&
+      SHELL_COMMAND_WRAPPERS.has(normalizedTokenProgram)
+    ) {
+      return wrappedShellCommandProgramName(
+        normalizedTokenProgram,
+        tokens,
+        index + 1,
+        depth,
+        commandSplit.remainingCommand,
+      );
     }
-    if (normalizedTokenProgram && SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram)) {
+    if (
+      isUnqualifiedToken &&
+      normalizedTokenProgram &&
+      SKIPPABLE_SHELL_SETUP_PROGRAMS.has(normalizedTokenProgram)
+    ) {
       return commandSplit.remainingCommand
         ? commandProgramNameInternal(commandSplit.remainingCommand, depth + 1, "shell")
         : null;
     }
     if (
       !tokenProgram ||
-      NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram.toLowerCase()) ||
+      (isUnqualifiedToken && NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram.toLowerCase())) ||
       NON_PROGRAM_PREFIX_CHARACTERS.includes(tokenProgram[0] ?? "") ||
       NON_PROGRAM_SUFFIX_CHARACTERS.includes(tokenProgram.at(-1) ?? "") ||
       tokenProgram.endsWith("()")
