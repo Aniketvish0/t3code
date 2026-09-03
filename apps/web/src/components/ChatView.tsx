@@ -62,6 +62,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -4352,15 +4353,16 @@ function ChatViewContent(props: ChatViewProps) {
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
+  const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
+    if (key === "PageUp" && timelineRealContentOverflowsViewport()) {
+      cancelTimelineLiveFollowForUserNavigation();
+    }
+  });
   useEffect(() => {
     const controller = createPageScrollController({
       getContainer: () => legendListRef.current?.getScrollableNode() ?? null,
       getScrollPaddingBottomPx: () => composerOverlayElement?.getBoundingClientRect().height ?? 0,
-      onScrollStart: (key) => {
-        if (key === "PageUp" && timelineRealContentOverflowsViewport()) {
-          cancelTimelineLiveFollowForUserNavigationRef.current();
-        }
-      },
+      onScrollStart: handlePageScrollStart,
     });
     pageScrollControllerRef.current = controller;
 
@@ -4370,7 +4372,7 @@ function ChatViewContent(props: ChatViewProps) {
         pageScrollControllerRef.current = null;
       }
     };
-  }, [composerOverlayElement, timelineRealContentOverflowsViewport]);
+  }, [composerOverlayElement]);
   const onComposerPageScrollKeyDown = useCallback((key: PageScrollKey) => {
     pageScrollControllerRef.current?.handleKeyDown(key);
   }, []);

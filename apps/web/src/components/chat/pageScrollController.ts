@@ -77,6 +77,13 @@ function getDefaultEnv(): PageScrollEnv {
   };
 }
 
+function getDefaultPrefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)
+  );
+}
+
 export function getPageScrollMultiplier(holdElapsedMs: number): number {
   const progress = Math.max(0, holdElapsedMs) / PAGE_SCROLL_ACCELERATION_MS;
   return 1 + Math.min(progress, 1) * (PAGE_SCROLL_MAX_MULTIPLIER - 1);
@@ -132,11 +139,13 @@ function easeInOut(progress: number): number {
 export function createPageScrollController({
   getContainer,
   getScrollPaddingBottomPx,
+  getPrefersReducedMotion = getDefaultPrefersReducedMotion,
   onScrollStart,
   env = getDefaultEnv(),
 }: {
   getContainer: () => PageScrollContainer | null;
   getScrollPaddingBottomPx: () => number;
+  getPrefersReducedMotion?: () => boolean;
   onScrollStart?: (key: PageScrollKey) => void;
   env?: PageScrollEnv;
 }) {
@@ -252,12 +261,20 @@ export function createPageScrollController({
       }
 
       if (state.activeKey === key) {
+        if (getPrefersReducedMotion()) {
+          container.scrollTop += readPageScrollDistance(container) * getDirection(key);
+        }
         return;
       }
 
       stop({ cancelDiscreteAnimation: true });
       state.activeKey = key;
       onScrollStart?.(key);
+
+      if (getPrefersReducedMotion()) {
+        container.scrollTop += readPageScrollDistance(container) * getDirection(key);
+        return;
+      }
 
       smoothScrollBy(container, readPageScrollDistance(container) * getDirection(key));
 
