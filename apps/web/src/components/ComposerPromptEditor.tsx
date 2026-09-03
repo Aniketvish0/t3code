@@ -916,6 +916,9 @@ interface ComposerPromptEditorProps {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
+  onPageScrollKeyUp?: (key: string) => void;
+  onPageScrollRelease?: () => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -1557,6 +1560,9 @@ function ComposerPromptEditorInner({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onPageScrollKeyDown,
+  onPageScrollKeyUp,
+  onPageScrollRelease,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1829,6 +1835,35 @@ function ComposerPromptEditorInner({
                 data-testid="composer-editor"
                 aria-placeholder={placeholder}
                 placeholder={<span />}
+                onKeyDown={(event) => {
+                  const hasHeldModifier =
+                    event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
+
+                  if (
+                    event.key === "Control" ||
+                    event.key === "Meta" ||
+                    event.key === "Alt" ||
+                    event.key === "Shift"
+                  ) {
+                    onPageScrollRelease?.();
+                  }
+
+                  if (event.key !== "PageUp" && event.key !== "PageDown") {
+                    return;
+                  }
+                  if (hasHeldModifier) {
+                    onPageScrollRelease?.();
+                    return;
+                  }
+                  if (!onPageScrollKeyDown) {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  onPageScrollKeyDown(event.key);
+                }}
+                onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
+                onBlur={onPageScrollRelease}
                 onPaste={onPaste}
               />
             }
@@ -1868,6 +1903,9 @@ export function ComposerPromptEditor({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onPageScrollKeyDown,
+  onPageScrollKeyUp,
+  onPageScrollRelease,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1912,6 +1950,9 @@ export function ComposerPromptEditor({
         onPaste={onPaste}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
+        {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
+        {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
         {...(className ? { className } : {})}
       />
     </LexicalComposer>
