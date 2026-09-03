@@ -216,36 +216,6 @@ jobs:
             });
             const wasTrusted = currentLabels.some((label) => label.name === "vouch:trusted");
 
-            for (const label of currentLabels) {
-              if (!managedLabelNames.has(label.name) || label.name === nextLabelName) {
-                continue;
-              }
-
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issueNumber,
-                  name: label.name,
-                });
-              } catch (removeError) {
-                if (removeError.status !== 404) {
-                  throw removeError;
-                }
-              }
-            }
-
-            if (!currentLabels.some((label) => label.name === nextLabelName)) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                labels: [nextLabelName],
-              });
-            }
-
-            core.info(`PR #${issueNumber}: ${status} -> ${nextLabelName}`);
-
             const { data: pull } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -276,13 +246,44 @@ jobs:
 
             if (!decision.trigger) {
               core.info(`PR #${issueNumber}: skipped Bugbot because ${decision.reason}`);
-              return;
+            } else {
+              const { data: comment } = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: renderBugbotRequest(pull.head.sha),
+              });
+              core.info(`PR #${issueNumber}: requested Bugbot at ${comment.html_url}`);
             }
 
-            const { data: comment } = await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: renderBugbotRequest(pull.head.sha),
-            });
-            core.info(`PR #${issueNumber}: requested Bugbot at ${comment.html_url}`);
+            // Keep the old trust label until a required Bugbot request is recorded.
+            // A later bulk Vouch sync can then retry if comment creation fails.
+            for (const label of currentLabels) {
+              if (!managedLabelNames.has(label.name) || label.name === nextLabelName) {
+                continue;
+              }
+
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: label.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            if (!currentLabels.some((label) => label.name === nextLabelName)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [nextLabelName],
+              });
+            }
+
+            core.info(`PR #${issueNumber}: ${status} -> ${nextLabelName}`);

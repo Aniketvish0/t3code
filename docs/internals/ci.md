@@ -40,7 +40,8 @@ workflow.
 A change to `.github/VOUCHED.td` rechecks every open PR. This bulk check requests Bugbot only for a
 PR that changes to `vouch:trusted`. Existing trusted PRs wait for their next commit. Maintainers can
 also run the workflow for one PR with the `pr_number` workflow input. Manual runs still apply the
-same Vouch check.
+same Vouch check. For a newly trusted PR, the workflow records the Bugbot request before it updates
+the trust label. If the request fails, the next bulk check can retry it.
 
 Before this workflow reaches `main`, set Cursor Bugbot to **Run only when mentioned** for this
 repository. The API equivalent is `manualTriggerOnly: true`. If automatic reviews stay enabled,

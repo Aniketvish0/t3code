@@ -34,7 +34,7 @@ test("does not trigger Bugbot for closed or draft PRs", () => {
   assert.equal(getBugbotDecision({ ...eligible, draft: true }).trigger, false);
 });
 
-test("only triggers newly trusted PRs during a bulk vouch sync", () => {
+test("keeps a newly trusted bulk PR eligible until its label is synced", () => {
   assert.equal(
     getBugbotDecision({ ...eligible, eventName: "push", wasTrusted: false }).trigger,
     true,
