@@ -339,7 +339,26 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }),
             );
 
-            const result = yield* runMaintenanceCommand(update.executable, update.args);
+            // The cached capabilities chose the lock; re-derive ownership
+            // now so the command that runs matches the executable as it is
+            // at click time, not as it was at the last health refresh.
+            const fresh = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
+              instanceId,
+              provider,
+              { fresh: true },
+            );
+            if (!fresh.update || fresh.update.lockKey !== update.lockKey) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "Provider installation changed. Refresh and try again.",
+                }),
+              );
+            }
+
+            const result = yield* runMaintenanceCommand(fresh.update.executable, fresh.update.args);
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
@@ -353,9 +372,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
 
+            // Homebrew's "latest" moves once the upgrade lands; read it again.
+            const verified = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
+              instanceId,
+              provider,
+              { fresh: true },
+            );
             const { verifiedProviders } = yield* verifyRefreshedProvider(
               provider,
-              capabilities,
+              verified,
               instanceId,
             );
             const couldNotVerify = verifiedProviders.length === 0;

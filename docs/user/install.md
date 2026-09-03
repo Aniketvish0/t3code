@@ -112,6 +112,20 @@ Each provider CLI must be on the server's `PATH`, or have an explicit binary pat
 manager or a non-standard install location keeps the CLI off the `PATH` of the shell that
 started T3 Code.
 
+### Keeping Provider CLIs Current
+
+T3 Code checks each installed CLI against its latest release and shows an update badge in
+**Settings** → the provider's card, and a notice at launch, when it is behind.
+
+**Update now** appears only when T3 Code can tell which installer owns the CLI and runs that
+installer: the CLI's own `update` command for native installs, `brew upgrade` for Homebrew, and
+`npm`, `pnpm`, `bun`, or `vp` for a global package install. The command it will run is shown next
+to the button. For a Homebrew install, the latest version shown is the one Homebrew offers, which
+can lag the npm release by a few hours.
+
+When T3 Code cannot tell how a CLI was installed, it still shows the available version but leaves
+the update to you. Update the CLI the same way you installed it, then refresh the provider.
+
 ### When Auth Is Needed
 
 Provider auth is required before you start a session with that provider, not before you start

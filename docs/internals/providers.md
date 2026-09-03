@@ -98,6 +98,32 @@ empty inventory is authoritative. Existing threads keep their explicit model ide
 options when catalog metadata is missing; the catalog is not permission to choose a different
 model for a thread.
 
+## Provider updates
+
+`apps/server/src/provider/providerMaintenance.ts` decides whether T3 Code can run a one-click
+update for a CLI and, if so, which command. The rule is that a package manager is only invoked
+against an install it has evidence of owning; anything unproven is manual-only (`canUpdate:
+false`) and the user is shown the version gap without a command. Ownership is read from the
+resolved executable and its real path (symlinks followed):
+
+| Evidence                                                                                           | Update command                                  | Latest version        |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------- |
+| Native installer path (`~/.local/bin/claude`, `~/.codex/packages/standalone/`, `~/.opencode/bin/`) | `<resolved executable> update` / `upgrade`      | npm registry          |
+| Real path in `…/Cellar/<name>/` or `…/Caskroom/<name>/`                                            | `brew upgrade [--cask] <name>`                  | `brew info --json=v2` |
+| Real path in `<prefix>/lib/node_modules/<pkg>/` (or `<prefix>/node_modules/<pkg>/` on Windows)     | `npm install -g --prefix <prefix> <pkg>@latest` | npm registry          |
+| Real path under pnpm's global store / `~/.bun/bin/` / `~/.vite-plus/bin/`                          | `pnpm add -g` / `bun i -g` / `vp i -g`          | npm registry          |
+| Anything else                                                                                      | none                                            | npm registry          |
+
+The npm prefix is pinned because the `npm` on `PATH` can belong to a different Node install than
+the one that owns the provider (nvm, Volta, Vite+). Homebrew is compared against what
+`brew upgrade` can deliver, since casks lag npm by hours after every release; native installs share
+npm's version train, so the registry stays authoritative for them.
+
+Resolution is cached per instance for an hour (`makeCachedProviderMaintenanceResolution`).
+`ProviderMaintenanceRunner` reads it fresh immediately before executing an update and refuses to
+run when the lock key changed since the advisory that offered the update; it reads fresh again
+afterwards so the post-update advisory reflects the installer's new latest.
+
 ## Model manifest
 
 The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
