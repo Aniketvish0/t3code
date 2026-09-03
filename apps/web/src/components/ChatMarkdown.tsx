@@ -1977,7 +1977,7 @@ function areMarkdownFileLinkPropsEqual(
 function ChatMarkdown({
   text,
   cwd,
-  threadRef,
+  threadRef: threadRefProp,
   environmentId: explicitEnvironmentId,
   onTaskListChange,
   isStreaming = false,
@@ -1990,6 +1990,14 @@ function ChatMarkdown({
   onImageExpand,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
 }: ChatMarkdownProps) {
+  // Key threadRef on its ids, not its identity. The react-markdown component
+  // map below depends on it, and react-markdown uses those renderers as
+  // element types, so a fresh-but-equal object from a caller would remount
+  // every rendered node (and destroy any native text selection inside).
+  const threadRef = useMemo(
+    () => threadRefProp,
+    [threadRefProp?.environmentId, threadRefProp?.threadId],
+  );
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
