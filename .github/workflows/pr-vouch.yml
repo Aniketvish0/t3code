@@ -104,7 +104,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}
-          persist-credentials: false
           sparse-checkout: |
             .github/scripts/pr-vouch.cjs
             .github/scripts/pr-vouch.test.cjs
