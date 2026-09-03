@@ -134,7 +134,6 @@ import {
   type ChatMessage,
   isBrowserPreviewAttachment,
   isImageAttachment,
-  videoMimeType,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
@@ -299,11 +298,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
-import {
-  buildAttachmentVideoPreview,
-  expandedImageKey,
-  type ExpandedImagePreview,
-} from "./chat/ExpandedImagePreview";
+import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import {
@@ -2634,13 +2629,9 @@ function ChatViewContent(props: ChatViewProps) {
         useRightPanelStore.getState().openAttachment(activeThreadRef, attachment);
         return;
       }
-      if (videoMimeType(attachment) !== null) {
-        setExpandedImage(buildAttachmentVideoPreview(environmentId, attachment));
-        return;
-      }
       void downloadFileAttachment(attachment);
     },
-    [activeThreadRef, downloadFileAttachment, environmentId],
+    [activeThreadRef, downloadFileAttachment],
   );
   const serverAttachmentIds = useMemo(() => {
     const attachmentIds = new Set<string>();
