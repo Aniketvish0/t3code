@@ -572,10 +572,12 @@ function ThreadMarkdownImageView(props: {
                 mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
               }
               onPress={() =>
+                // Quick Look picks the viewer from the name's extension, so it needs the
+                // file name rather than the alt text.
                 props.onPressPreview({
                   kind: "image",
                   uri: props.uri!,
-                  name: props.alt ?? "Image",
+                  name: props.actionsSource?.name ?? props.alt ?? "Image",
                   sourceIdentifier,
                   actionsSource: props.actionsSource,
                 })
