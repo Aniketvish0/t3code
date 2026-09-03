@@ -22,6 +22,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
+  resolveEnvironmentMachineKind,
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
@@ -135,7 +136,6 @@ import {
   type ChatMessage,
   isBrowserPreviewAttachment,
   isImageAttachment,
-  videoMimeType,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
@@ -301,10 +301,11 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
-import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import {
+  type EnvironmentOption,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -375,7 +376,6 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   resolveFileAttachmentUrl,
-  isVideoPreviewRequestCurrent,
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -1509,19 +1509,13 @@ function ChatViewContent(props: ChatViewProps) {
     [composerRef],
   );
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
-  const routeThreadKeyRef = useRef(routeThreadKey);
-  routeThreadKeyRef.current = routeThreadKey;
-  const videoPreviewRequestIdRef = useRef(0);
-  const cancelVideoPreviewRequest = useCallback(() => {
-    videoPreviewRequestIdRef.current += 1;
-  }, []);
-  const [openingVideoAttachmentId, setOpeningVideoAttachmentId] = useState<string | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   useEffect(() => {
     const item = expandedImage?.images[expandedImage.index];
-    if (item?.type !== "video" || !item.src.startsWith("blob:")) return;
-    return () => revokeBlobPreviewUrl(item.src);
+    if (item?.type !== "video" || item.src === null || !item.src.startsWith("blob:")) return;
+    const src = item.src;
+    return () => revokeBlobPreviewUrl(src);
   }, [expandedImage]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
@@ -2063,22 +2057,18 @@ function ChatViewContent(props: ChatViewProps) {
       (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
     );
     const seen = new Set<string>();
-    const envs: Array<{
-      environmentId: EnvironmentId;
-      projectId: ProjectId;
-      label: string;
-      isPrimary: boolean;
-    }> = [];
+    const envs: EnvironmentOption[] = [];
     for (const p of memberProjects) {
       if (seen.has(p.environmentId)) continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
-      const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
+      const environment = environmentById.get(p.environmentId) ?? null;
       envs.push({
         environmentId: p.environmentId,
         projectId: p.id,
-        label,
+        label: environment?.label ?? p.environmentId,
         isPrimary,
+        machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
       });
     }
     // Sort: primary first, then alphabetical
@@ -2579,12 +2569,11 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     return () => {
       clearAttachmentPreviewHandoffs();
-      cancelVideoPreviewRequest();
       for (const message of optimisticUserMessagesRef.current) {
         revokeUserMessagePreviewUrls(message);
       }
     };
-  }, [cancelVideoPreviewRequest, clearAttachmentPreviewHandoffs]);
+  }, [clearAttachmentPreviewHandoffs]);
   const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
     if (previewUrls.length === 0) return;
 
@@ -2612,18 +2601,6 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add({ type: "error", title: "The environment is not connected." });
         return;
       }
-      const isVideo = videoMimeType(attachment) !== null;
-      const action = isVideo ? "play" : "download";
-      const videoPreviewRequestId = isVideo ? ++videoPreviewRequestIdRef.current : 0;
-      const isCurrentRequest = () =>
-        !isVideo ||
-        isVideoPreviewRequestCurrent(
-          routeThreadKey,
-          routeThreadKeyRef.current,
-          videoPreviewRequestId,
-          videoPreviewRequestIdRef.current,
-        );
-      if (isVideo) setOpeningVideoAttachmentId(attachment.id);
 
       try {
         const url = await resolveFileAttachmentUrl({
@@ -2632,30 +2609,19 @@ function ChatViewContent(props: ChatViewProps) {
           httpBaseUrl: connection.httpBaseUrl,
           createAssetUrl: createAttachmentAssetUrl,
         });
-        if (!isCurrentRequest()) return;
-        if (isVideo) {
-          setExpandedImage({
-            images: [{ src: url, name: attachment.name, type: "video" }],
-            index: 0,
-          });
-          return;
-        }
         const anchor = document.createElement("a");
         anchor.href = url;
         anchor.download = attachment.name;
         anchor.click();
       } catch (error) {
-        if (!isCurrentRequest()) return;
         toastManager.add({
           type: "error",
-          title: "Could not " + action + " " + attachment.name,
+          title: "Could not download " + attachment.name,
           description: error instanceof Error ? error.message : "The attachment is unavailable.",
         });
-      } finally {
-        if (isVideo && isCurrentRequest()) setOpeningVideoAttachmentId(null);
       }
     },
-    [createAttachmentAssetUrl, environmentId, routeThreadKey],
+    [createAttachmentAssetUrl, environmentId],
   );
   const openFileAttachment = useCallback(
     (attachment: ChatFileAttachment) => {
@@ -4726,10 +4692,8 @@ function ChatViewContent(props: ChatViewProps) {
       return [];
     });
     resetLocalDispatch();
-    cancelVideoPreviewRequest();
-    setOpeningVideoAttachmentId(null);
     setExpandedImage(null);
-  }, [cancelVideoPreviewRequest, draftId, resetLocalDispatch, threadId]);
+  }, [draftId, resetLocalDispatch, threadId]);
 
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
@@ -7224,14 +7188,9 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
-  const onExpandTimelineImage = useCallback(
-    (preview: ExpandedImagePreview) => {
-      cancelVideoPreviewRequest();
-      setOpeningVideoAttachmentId(null);
-      setExpandedImage(preview);
-    },
-    [cancelVideoPreviewRequest],
-  );
+  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
+    setExpandedImage(preview);
+  }, []);
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread || !activeThreadRef) return;
@@ -7561,7 +7520,6 @@ function ChatViewContent(props: ChatViewProps) {
                 onImageExpand={onExpandTimelineImage}
                 onFileOpen={openFileAttachment}
                 onFileDownload={downloadFileAttachment}
-                openingVideoAttachmentId={openingVideoAttachmentId}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
@@ -7740,7 +7698,6 @@ function ChatViewContent(props: ChatViewProps) {
                             setThreadError={setThreadError}
                             onExpandImage={onExpandTimelineImage}
                             onFileOpen={openFileAttachment}
-                            openingVideoAttachmentId={openingVideoAttachmentId}
                           />
                         </div>
                       </ComposerSurface.Host>
@@ -7961,7 +7918,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       {expandedImage && (
         <ExpandedImageDialog
-          key={`${expandedImage.images[expandedImage.index]?.src ?? "image"}:${expandedImage.index}`}
+          key={expandedImageKey(expandedImage)}
           preview={expandedImage}
           onClose={closeExpandedImage}
         />
