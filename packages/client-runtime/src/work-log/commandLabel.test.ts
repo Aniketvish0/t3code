@@ -240,6 +240,7 @@ describe("commandProgramName", () => {
     ["Push-Location C:\\work; node app.js", "node"],
     ["Start-Process -FilePath node -ArgumentList server.js", "node"],
     ["Start-Process -ArgumentList '-FilePath helper' node", "node"],
+    ["Start-Process -ErrorAction Stop -FilePath node", "node"],
     ["Start-Process -NoNewWindow -WorkingDirectory C:\\work node", "node"],
     ['Start-Process "C:\\Program Files\\Example\\app.exe"', "app.exe"],
     ['Start-Process -FilePath ".\\dist\\Example App.exe" -PassThru', "Example App.exe"],

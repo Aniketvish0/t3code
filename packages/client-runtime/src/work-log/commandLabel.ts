@@ -28,10 +28,12 @@ const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
 ]);
 const START_PROCESS_FLAGS = new Set([
   "-confirm",
+  "-debug",
   "-loaduserprofile",
   "-nonewwindow",
   "-passthru",
   "-usenewenvironment",
+  "-verbose",
   "-wait",
   "-whatif",
 ]);
@@ -39,10 +41,20 @@ const START_PROCESS_OPTIONS_WITH_VALUE = new Set([
   "-argumentlist",
   "-credential",
   "-environment",
+  "-erroraction",
+  "-errorvariable",
+  "-informationaction",
+  "-informationvariable",
+  "-outbuffer",
+  "-outvariable",
+  "-pipelinevariable",
+  "-progressaction",
   "-redirectstandarderror",
   "-redirectstandardinput",
   "-redirectstandardoutput",
   "-verb",
+  "-warningaction",
+  "-warningvariable",
   "-windowstyle",
   "-workingdirectory",
 ]);
