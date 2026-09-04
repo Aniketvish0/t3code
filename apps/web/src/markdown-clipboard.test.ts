@@ -154,6 +154,17 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(collectAssistantCitations(copied).map((entry) => entry.citation)).toEqual([citation]);
   });
 
+  it("keeps source references when copying a paragraph containing numbered citation controls", () => {
+    const chip = new FakeElement("SPAN", [], {
+      "data-markdown-copy": "\\[Source 1: turn0view0\\]",
+    }).append(new FakeElement("BUTTON").append(new FakeText("1")));
+    const paragraph = new FakeElement("P").append(new FakeText("The report supports this. "), chip);
+
+    expect(serializeRenderedMarkdownFragment(asNode(paragraph))).toBe(
+      "The report supports this. \\[Source 1: turn0view0\\]",
+    );
+  });
+
   it("keeps a highlighted block code selection plain when its pre wrapper is outside the range", () => {
     const code = new FakeElement("CODE").append(
       shikiCodeLine("git show-ref --verify refs/remotes/origin/opt/deploy/dev"),

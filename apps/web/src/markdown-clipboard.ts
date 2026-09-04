@@ -363,6 +363,9 @@ export function serializeTableElementToCsv(table: Element): string {
 }
 
 function sanitizedHtmlFrom(container: Element): string {
+  for (const node of container.querySelectorAll("[data-markdown-copy-text]")) {
+    node.textContent = node.getAttribute("data-markdown-copy-text");
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
