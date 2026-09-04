@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { filterRelayResponse, relayRequestError, shouldRetryCloudLink } from "./relayResponse.ts";
 
@@ -15,6 +16,25 @@ const response = (
       ? new Response(body, { status, ...(headers ? { headers } : {}) })
       : Response.json(body, { status, ...(headers ? { headers } : {}) }),
   );
+
+it("reports a transport failure category without exposing request or cause details", () => {
+  const error = relayRequestError(
+    new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({
+        request: HttpClientRequest.post("https://relay.example.test/link?token=private-token"),
+        description: "private transport details",
+        cause: new Error("private cause details"),
+      }),
+    }),
+  );
+
+  expect(error._tag).toBe("EnvironmentHttpInternalServerError");
+  expect(error.message).toContain("TransportError");
+  expect(error.message).toContain("network connection");
+  expect(error.message).not.toContain("relay.example.test");
+  expect(error.message).not.toContain("private");
+  expect(shouldRetryCloudLink(error)).toBe(true);
+});
 
 it.effect("reports the tunnel limit and relay trace instead of a generic 403", () =>
   Effect.gen(function* () {

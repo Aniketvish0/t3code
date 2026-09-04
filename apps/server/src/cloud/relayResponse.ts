@@ -25,7 +25,7 @@ export function relayRequestError(cause: unknown) {
   return isRelayResponseError(cause)
     ? cause
     : new EnvironmentHttpInternalServerError({
-        message: `Could not complete the T3 Connect relay request. ${isHttpClientError(cause) ? cause.message : "The relay returned an unexpected response."} Check this machine's network connection and relay availability, then retry.`,
+        message: `Could not complete the T3 Connect relay request. ${isHttpClientError(cause) ? `The relay request failed (${cause.reason._tag}).` : "The relay returned an unexpected response."} Check this machine's network connection and relay availability, then retry.`,
       });
 }
 
