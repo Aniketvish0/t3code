@@ -2736,7 +2736,7 @@ function ChatMarkdown({
           >
             {renderMermaid ? (
               <MermaidDiagram
-                key={codeBlock.code}
+                key={`${resolvedTheme}:${codeBlock.code}`}
                 code={codeBlock.code}
                 theme={resolvedTheme}
                 fallback={codeFallback}
