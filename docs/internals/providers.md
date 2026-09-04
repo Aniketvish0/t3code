@@ -23,6 +23,21 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+## Provider diagnostics
+
+Native event logs retain protocol lifecycle events, responses, and failures. Token deltas and
+duplicate raw frames are filtered before adapters copy or redact their payloads. The filter accepts
+both legacy native events and the decoded protocol envelopes used by v2. Decode failures remain
+visible through their diagnostic frames.
+
+Log payloads have a 64 KiB encoded budget. Large or deeply nested payloads become structural
+summaries that retain routing identifiers, methods, status, and error fields. Traversal is bounded
+before redaction and serialization, so a large response cannot create several full copies just to
+write a diagnostic record. These limits apply to logging; provider event handling is unchanged.
+
+Codex thread resume requests exclude historical turns when only the thread identity and update time
+are needed. The adapter decodes those metadata fields without loading a duplicate transcript.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:
