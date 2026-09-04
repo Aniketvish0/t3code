@@ -31,3 +31,7 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 headline and chart. Refreshing rescans every connected environment and refetches model pricing on
 each of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.
+
+On mobile, **Usage** and **Limits** are two tabs at the top of the page. On Usage, a second row
+holds the period and the cost/tokens toggle; Limits has neither. Pull down to refresh either tab:
+Usage rescans transcripts, Limits re-probes every provider and hub.
