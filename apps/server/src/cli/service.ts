@@ -91,7 +91,7 @@ export function formatServiceStatus(
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...problems,
-    ...(status.current ? [] : [`  Next: Run \`npx t3@${installedVersion} service update\`.`]),
+    ...(status.current ? [] : [`  Next: Run \`npx t3@${cliVersion} service update\`.`]),
   ].join("\n");
 }
 

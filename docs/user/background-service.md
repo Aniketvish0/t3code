@@ -115,9 +115,9 @@ Run only the `loginctl` command with sudo. Running `t3` with sudo creates a sepa
 Connect identity for root. If an administrator is unavailable, run `t3 serve` in a terminal and
 keep that session open.
 
-The repair command shown by status uses the installed version, including its nightly version.
-This repairs an incomplete install without accidentally switching release channels. Setup leaves an
-existing service running if the user-manager or lingering check fails.
+The repair command shown by status uses the CLI version, or the installed service version if that
+is newer. An older stable CLI therefore does not recommend downgrading a nightly installation.
+Setup leaves an existing service running if the user-manager or lingering check fails.
 
 `t3 service status` prints the log path. The adjacent `server.trace.ndjson` file contains detailed
 server traces. For failures after authorization, see [T3 Connect troubleshooting](./remote-access.md#t3-connect-troubleshooting).

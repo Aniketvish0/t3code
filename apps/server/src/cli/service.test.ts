@@ -68,6 +68,15 @@ it("explains an incomplete nightly installation and keeps repair on its installe
   expect(output).not.toContain("t3@latest");
 });
 
+it("suggests the newer CLI version when the installed service needs an update", () => {
+  const output = formatServiceStatus(
+    { ...status, current: false, installedVersion: "0.0.28" },
+    "0.0.29",
+  );
+  expect(output).toContain("npx t3@0.0.29 service update");
+  expect(output).not.toContain("npx t3@0.0.28 service update");
+});
+
 it("explains where the service is supported", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
