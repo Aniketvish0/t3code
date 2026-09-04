@@ -1150,6 +1150,7 @@ describe("EnvironmentSupervisor", () => {
         Option.some(
           new TokenStore.RemoteDpopAccessToken({
             environmentId: TARGET.environmentId,
+            accountId: "test-account",
             label: TARGET.label,
             endpoint,
             accessToken: "access-token-1",

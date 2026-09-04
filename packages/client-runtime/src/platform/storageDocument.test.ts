@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -16,6 +17,7 @@ import {
   SshConnectionTarget,
 } from "../connection/model.ts";
 import {
+  ConnectionCatalogDocument,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
@@ -57,6 +59,26 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
 });
 
 describe("ConnectionCatalogDocument", () => {
+  it.each([
+    { name: "legacy", accountId: undefined },
+    { name: "account-bound", accountId: "account-1" },
+  ])("round-trips a catalog containing a $name DPoP token", ({ accountId }) => {
+    const token = new TokenStore.RemoteDpopAccessToken({
+      ...REMOTE_TOKEN,
+      ...(accountId === undefined ? {} : { accountId }),
+    });
+    const document = {
+      ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      targets: [RELAY_TARGET],
+      remoteDpopTokens: [token],
+    };
+    const schema = Schema.fromJsonString(ConnectionCatalogDocument);
+    const restored = Schema.decodeUnknownSync(schema)(Schema.encodeSync(schema)(document));
+
+    expect(restored).toEqual(document);
+    expect(restored.remoteDpopTokens[0]?.accountId).toBe(accountId);
+  });
+
   it("registers a bearer connection as one catalog mutation", () => {
     const document = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,

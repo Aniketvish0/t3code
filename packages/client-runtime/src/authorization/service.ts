@@ -323,6 +323,7 @@ export const make = Effect.gen(function* () {
       const issuedAt = yield* Clock.currentTimeMillis;
       return new TokenStore.RemoteDpopAccessToken({
         environmentId: descriptor.environmentId,
+        accountId: identity.accountId,
         label: descriptor.label,
         endpoint: bootstrap.endpoint,
         accessToken: access.access_token,
@@ -361,6 +362,7 @@ export const make = Effect.gen(function* () {
         if (
           Option.isSome(cached) &&
           cached.value.environmentId === input.expectedEnvironmentId &&
+          cached.value.accountId === identity.accountId &&
           cached.value.dpopThumbprint === thumbprint &&
           cached.value.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS &&
           cached.value.accessToken !== input.rejectedAccessToken &&

@@ -70,6 +70,12 @@ one retry with a new DPoP proof; transport errors do not trigger credential
 refresh. Refresh failure belongs to the HTTP operation and does not release the
 RPC session or increment its connection generation.
 
+Persisted DPoP tokens record the issuing cloud account. Reuse requires that
+account to match the current sign-in, as well as a matching signing key and a
+valid expiry. Older cached tokens without account metadata remain readable but
+must renew before use. Same-account restarts can reuse an owned token; logout
+or a sign-in change invalidates credentials observed in the previous live session.
+
 ### Wakeups
 
 Wakeup handling differs by phase, in [supervisor.ts][supervisor]:

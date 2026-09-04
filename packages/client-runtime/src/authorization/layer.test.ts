@@ -95,6 +95,7 @@ const persistedToken = (
 ) =>
   new TokenStore.RemoteDpopAccessToken({
     environmentId: input.environmentId ?? ENVIRONMENT_ID,
+    accountId: "account-1",
     label: DESCRIPTOR.label,
     endpoint: ENDPOINT,
     accessToken: input.accessToken ?? "cached-access-token",
@@ -306,10 +307,11 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("reuses a valid persisted environment token without contacting the relay", () =>
+  it.effect("reuses a same-account persisted environment token without contacting the relay", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
         accessToken: "cached-access-token",
@@ -342,6 +344,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     Effect.gen(function* () {
       const expired = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
         accessToken: "expired-access-token",
@@ -380,6 +383,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
         accessToken: "invalid-access-token",
@@ -440,6 +444,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
         accessToken: "cached-access-token",
@@ -748,6 +753,58 @@ describe("RemoteEnvironmentAuthorization", () => {
         });
       }).pipe(Effect.provide(harness.layer));
       expect((yield* Ref.get(harness.tokens)).size).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "renews another account's persisted token after the authorization service restarts",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          initialToken: persistedToken(),
+          responses: [Response.json(DESCRIPTOR), accessToken("account-2-token")],
+        });
+        const authorize = Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          return yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+        }).pipe(Effect.provide(harness.layer));
+
+        expect((yield* authorize).httpAuthorization.accessToken).toBe("cached-access-token");
+        yield* Ref.set(harness.session, Option.some({ accountId: "account-2" }));
+        expect((yield* authorize).httpAuthorization.accessToken).toBe("account-2-token");
+        expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accountId).toBe("account-2");
+
+        yield* Ref.set(harness.session, Option.some({ accountId: "account-2" }));
+        expect((yield* authorize).httpAuthorization.accessToken).toBe("account-2-token");
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+        expect(harness.fetch.calls).toHaveLength(2);
+      }),
+  );
+
+  it.effect("renews a legacy unowned token once and reuses its account-bound replacement", () =>
+    Effect.gen(function* () {
+      const legacy = new TokenStore.RemoteDpopAccessToken({
+        environmentId: ENVIRONMENT_ID,
+        label: DESCRIPTOR.label,
+        endpoint: ENDPOINT,
+        accessToken: "legacy-access-token",
+        expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        dpopThumbprint: "thumbprint-1",
+      });
+      const harness = yield* makeHarness({
+        initialToken: legacy,
+        responses: [Response.json(DESCRIPTOR), accessToken("account-bound-token")],
+      });
+      const authorize = Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect((yield* authorize).httpAuthorization.accessToken).toBe("account-bound-token");
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accountId).toBe("account-1");
+      expect((yield* authorize).httpAuthorization.accessToken).toBe("account-bound-token");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+      expect(harness.fetch.calls).toHaveLength(2);
     }),
   );
 
