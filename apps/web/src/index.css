@@ -1828,9 +1828,11 @@ code {
   display: none;
 }
 
+/* Mermaid emits width="100%" plus an inline max-width equal to the diagram's
+   native width, so the SVG shrinks to fit the chat column and never grows past
+   its natural size. Only the height needs help: it must follow the viewBox. */
 .chat-markdown .chat-markdown-mermaid svg {
   display: block;
-  max-width: none;
   height: auto;
   margin: 0 auto;
 }

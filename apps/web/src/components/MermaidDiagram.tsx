@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { RenderResult } from "mermaid";
 
 import { serializeMarkdownCodeFence } from "../markdown-clipboard";
@@ -7,6 +7,24 @@ type MermaidTheme = "light" | "dark";
 
 // Mermaid configuration is global, so initialization and rendering must stay paired.
 let mermaidRenderQueue = Promise.resolve();
+
+// The chat list unmounts off-screen rows. Without this, every scroll back past a
+// diagram flashed the code fallback, re-ran Mermaid, and jumped the row height.
+const MAX_CACHED_DIAGRAMS = 50;
+const renderedDiagrams = new Map<string, string>();
+
+function diagramCacheKey(theme: MermaidTheme, code: string) {
+  return `${theme}\n${code}`;
+}
+
+function rememberRenderedDiagram(key: string, svg: string) {
+  renderedDiagrams.delete(key);
+  renderedDiagrams.set(key, svg);
+  if (renderedDiagrams.size > MAX_CACHED_DIAGRAMS) {
+    const oldest = renderedDiagrams.keys().next().value;
+    if (oldest !== undefined) renderedDiagrams.delete(oldest);
+  }
+}
 
 export function renderMermaidDiagram(
   id: string,
@@ -57,40 +75,33 @@ export function MermaidDiagram({
 }) {
   const reactId = useId();
   const diagramId = `t3-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const diagramRef = useRef<HTMLDivElement>(null);
+  const cacheKey = diagramCacheKey(theme, code);
   // Remounted per code and theme via key, so the stored result always matches.
-  const [result, setResult] = useState<RenderResult | null>(null);
+  const [svg, setSvg] = useState<string | null>(() => renderedDiagrams.get(cacheKey) ?? null);
 
   useEffect(() => {
+    if (renderedDiagrams.has(cacheKey)) return;
     let active = true;
     void renderMermaidDiagram(diagramId, code, theme, () => active).then(
-      (nextResult) => {
-        if (active && nextResult) setResult(nextResult);
+      (result: RenderResult | null) => {
+        if (!result) return;
+        rememberRenderedDiagram(cacheKey, result.svg);
+        if (active) setSvg(result.svg);
       },
       () => undefined,
     );
     return () => {
       active = false;
     };
-  }, [code, diagramId, theme]);
+  }, [cacheKey, code, diagramId, theme]);
 
-  useLayoutEffect(() => {
-    const svg = diagramRef.current?.querySelector("svg");
-    const width = svg?.viewBox.baseVal.width ?? 0;
-    if (svg && Number.isFinite(width) && width > 0) {
-      svg.style.width = `${Math.ceil(width)}px`;
-      svg.style.maxWidth = "none";
-    }
-  });
-
-  if (!result) return fallback;
+  if (!svg) return fallback;
 
   return (
     <div
-      ref={diagramRef}
       className="chat-markdown-mermaid"
       data-markdown-copy={serializeMarkdownCodeFence(code, "mermaid")}
-      dangerouslySetInnerHTML={{ __html: result.svg }}
+      dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
 }
