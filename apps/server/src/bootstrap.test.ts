@@ -57,6 +57,17 @@ vi.mock("node:fs", async (importOriginal) => {
 
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 const nullDevice = windowsHost ? "\\\\.\\NUL" : "/dev/null";
+// Where there is no /proc or /dev/fd path to reopen (Windows), the reader
+// streams the inherited fd itself with autoClose, so it is already closed by
+// the time the test's finalizer runs.
+const closeIfOpen = (fd: number) => {
+  try {
+    NodeFS.closeSync(fd);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error;
+  }
+};
+
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
@@ -73,7 +84,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => closeIfOpen(fd)),
       );
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
@@ -119,7 +130,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => closeIfOpen(fd)),
       );
       const fdPath = `/proc/self/fd/${fd}`;
 
@@ -160,7 +171,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     Effect.gen(function* () {
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(nullDevice, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => closeIfOpen(fd)),
       );
 
       fstatSyncInterceptor.failFd = fd;
@@ -187,7 +198,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => closeIfOpen(fd)),
       );
       const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
         timeoutMs: 100,
@@ -228,7 +239,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
         const fd = yield* Effect.acquireRelease(
           Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-          (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+          (fd) => Effect.sync(() => closeIfOpen(fd)),
         );
 
         const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
