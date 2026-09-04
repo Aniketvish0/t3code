@@ -202,6 +202,13 @@ see [Keeping T3 Code in Sync](./updating.md).
 On a Linux host, you can keep the server running after logout and manage it independently of the
 connection method. See [Running T3 Code in the Background](./background-service.md).
 
+## Long-running T3 Connect sessions
+
+T3 Connect renews access credentials when needed without disconnecting a healthy
+connection. Pull request diffs and provider settings keep working
+after the previous credential expires. A failed renewal affects that request;
+it does not disconnect an otherwise healthy conversation.
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.

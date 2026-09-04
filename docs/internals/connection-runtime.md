@@ -41,7 +41,7 @@ loops, or RPC clients.
 
 ## Connection State
 
-The supervisor is the only retry owner.
+The supervisor is the only transport retry owner.
 
 1. A persisted or platform registration marks an environment as desired.
 2. If the device is offline, the supervisor releases the active session and
@@ -56,6 +56,19 @@ The supervisor is the only retry owner.
 6. An involuntary session close keeps the registration and cache, then retries.
 7. Explicit removal closes the session and deletes the registration,
    credentials, shell cache, and thread cache.
+
+### HTTP authorization
+
+DPoP access-token expiry does not close a healthy RPC session. The socket
+authenticates at upgrade; HTTP requests obtain current authorization from
+`RemoteEnvironmentAuthorization` independently of that socket's lifetime.
+
+Before an authenticated HTTP request, the authorization service reuses a token
+outside its expiry margin or refreshes it. Concurrent requests for the same
+environment share the refresh. A rejected credential permits one refresh and
+one retry with a new DPoP proof; transport errors do not trigger credential
+refresh. Refresh failure belongs to the HTTP operation and does not release the
+RPC session or increment its connection generation.
 
 ### Wakeups
 
@@ -181,7 +194,7 @@ Required coverage includes:
 - authentication wakeups;
 - involuntary close and reconnect;
 - explicit removal clearing all owned state;
-- relay token reuse and refresh;
+- relay HTTP token reuse and refresh without replacing a healthy RPC session;
 - progressive relay discovery;
 - shell and thread cache hydration;
 - durable subscriptions switching sessions;

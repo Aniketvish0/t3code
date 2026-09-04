@@ -18,7 +18,6 @@ import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
-  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
   type ConnectionAttemptError,
   type ConnectionTarget,
   ConnectionTransientError,
@@ -484,21 +483,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
-  const waitForAuthorizationRefresh = Effect.fnUntraced(function* (
-    preparedConnection: PreparedConnection,
-  ) {
-    const authorization = preparedConnection.httpAuthorization;
-    if (authorization?._tag !== "Dpop") {
-      return yield* Effect.never;
-    }
-    const now = yield* Clock.currentTimeMillis;
-    yield* Effect.sleep(
-      Math.max(0, authorization.expiresAtEpochMs - now - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS),
-    );
-    yield* Effect.logDebug("Refreshing the environment connection before its DPoP token expires.");
-    return true;
-  });
-
   const runAttempt = Effect.fnUntraced(function* (
     attempt: number,
     generation: number,
@@ -592,7 +576,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
-    const connectedExit = yield* Effect.raceAllFirst([
+    const connectedExit = yield* Effect.raceFirst(
       active.lease.session.closed.pipe(
         Effect.mapError((error): TracedAttemptFailure => ({
           error,
@@ -605,8 +589,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           attemptSpan: active.attemptSpan,
         })),
       ),
-      waitForAuthorizationRefresh(active.lease.prepared),
-    ]).pipe(exitUnlessInterrupted);
+    ).pipe(exitUnlessInterrupted);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
       return {
