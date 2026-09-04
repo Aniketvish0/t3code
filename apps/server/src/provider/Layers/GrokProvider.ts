@@ -39,6 +39,8 @@ import {
 } from "../acp/GrokAcpSupport.ts";
 import { sessionModelStateFromInitialize } from "../acp/AcpRuntimeModel.ts";
 import { discoverGrokSkills } from "../Drivers/GrokSkills.ts";
+import { probeGrokUsageLimits } from "../grokTuiUsageProbe.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -493,6 +495,18 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
+  // The weekly limit only exists in the TUI's `/usage` panel, and only on a
+  // signed-in account; an API-key session has no plan quota to report.
+  const usageLimits =
+    auth.type === "api_key"
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+      : yield* probeGrokUsageLimits({
+          binaryPath: grokSettings.binaryPath || "grok",
+          cwd: cwd ?? process.cwd(),
+          checkedAt,
+          environment,
+        }).pipe(Effect.map((result) => result.usageLimits));
+
   return buildServerProvider({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
@@ -505,6 +519,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       // A failed metadata probe degrades the model picker, it does not make chats fail.
       status: acpFailed ? "warning" : "ready",
       auth,
+      usageLimits,
       ...(acpFailed
         ? {
             message:
