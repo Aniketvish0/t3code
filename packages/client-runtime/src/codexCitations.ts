@@ -58,8 +58,8 @@ function parseCitation(raw: string) {
   const ids = raw.slice(PREFIX.length, -END.length).split(SEPARATOR);
   if (!ids.every((id) => SOURCE_ID.test(id))) return null;
   const last = ids.at(-1);
-  const locator = last !== undefined && LOCATOR.test(last) ? ids.pop() : undefined;
-  if (ids.length === 0) return null;
+  const locator =
+    ids.length > 1 && last !== undefined && LOCATOR.test(last) ? ids.pop() : undefined;
   return { ids: [...new Set(ids)], ...(locator === undefined ? {} : { locator }) };
 }
 

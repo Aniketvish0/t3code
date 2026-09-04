@@ -113,6 +113,16 @@ describe("remarkCodexCitations", () => {
     }
   });
 
+  it.each(["L42", "L8-L13"])("keeps a locator-shaped sole source ID: %s", (id) => {
+    const source = marker(id);
+    const located = marker(id, "L5-L8");
+    expect(citations(`${source} ${located}`)).toEqual([
+      { raw: source, sources: [{ id, number: 1 }] },
+      { raw: located, sources: [{ id, number: 1 }], locator: "L5-L8" },
+    ]);
+    expect(renderCodexCitationsAsMarkdown(source)).toBe(`\\[Source 1: ${id}\\]`);
+  });
+
   it("handles consecutive markers without swallowing the following text", () => {
     const markdown = `Before ${SCREENSHOT_CITATION}${marker("second")}, after.`;
     expect(renderCodexCitationsAsMarkdown(markdown)).toBe(
@@ -212,8 +222,6 @@ describe("remarkCodexCitations", () => {
     "\uE200CITE\uE202turn0view0\uE201",
     "\uE200cite\uE201",
     marker(""),
-    marker("L8"),
-    marker("L8-L13"),
     marker("turn0view0", ""),
     marker("two words"),
     marker("source.with.dots"),
