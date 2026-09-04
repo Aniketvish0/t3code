@@ -149,6 +149,8 @@ describe("commandProgramName", () => {
     ["set -eu; npm test", "npm"],
     [": && npm test", "npm"],
     ["true && npm test", "npm"],
+    ["false || npm test", "npm"],
+    ["false; npm test", "npm"],
     ["sudo -n true && npm test", "npm"],
     ["sudo -n true; echo checked", "echo"],
     ["test -d node_modules || vp i", "vp"],
@@ -235,11 +237,15 @@ describe("commandProgramName", () => {
     ["Set-Location C:\\work; npm test", "npm"],
     ["Push-Location C:\\work; node app.js", "node"],
     ["Start-Process -FilePath node -ArgumentList server.js", "node"],
+    ["Start-Process -ArgumentList '-FilePath helper' node", "node"],
+    ["Start-Process -NoNewWindow -WorkingDirectory C:\\work node", "node"],
     ['Start-Process "C:\\Program Files\\Example\\app.exe"', "app.exe"],
     ['Start-Process -FilePath ".\\dist\\Example App.exe" -PassThru', "Example App.exe"],
     [".\\.venv\\Scripts\\python.exe script.py", "python.exe"],
     ["$env:LOCALAPPDATA\\Programs\\tool.exe --version", "tool.exe"],
     ['"=== CHECK FILE ==="; Get-Content file.txt', "Get-Content"],
+    ["$x = @'\ndata'; Get-Fake\n'@\nGet-Process", "Get-Process"],
+    ["@'\nprint('ok; still data')\n'@ | python -", "python"],
   ])("handles common PowerShell setup and launch commands: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });

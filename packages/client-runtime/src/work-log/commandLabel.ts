@@ -26,6 +26,26 @@ const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
   "-windowstyle",
   "-workingdirectory",
 ]);
+const START_PROCESS_FLAGS = new Set([
+  "-confirm",
+  "-loaduserprofile",
+  "-nonewwindow",
+  "-passthru",
+  "-usenewenvironment",
+  "-wait",
+  "-whatif",
+]);
+const START_PROCESS_OPTIONS_WITH_VALUE = new Set([
+  "-argumentlist",
+  "-credential",
+  "-environment",
+  "-redirectstandarderror",
+  "-redirectstandardinput",
+  "-redirectstandardoutput",
+  "-verb",
+  "-windowstyle",
+  "-workingdirectory",
+]);
 const SKIPPABLE_SUDO_PROBES = new Set(["[", "[[", "test", "true"]);
 const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#!%@:";
 const NON_PROGRAM_SUFFIX_CHARACTERS = "){]}`";
@@ -211,9 +231,9 @@ function tokenizeShellCommand(command: string): string[] | null {
     }
     if (character === "\\" && quote !== "'") {
       const nextCharacter = input[index + 1];
-      const isWindowsDrivePath = quote === null && /^[A-Za-z]:/.test(current);
+      const isWindowsPath = quote === null && /^(?:[A-Za-z]:|\.{1,2})(?:\\[^\s]*)?$/u.test(current);
       if (
-        (quote === '"' || isWindowsDrivePath) &&
+        (quote === '"' || isWindowsPath) &&
         nextCharacter !== undefined &&
         nextCharacter !== '"' &&
         nextCharacter !== "\\" &&
@@ -326,6 +346,7 @@ function tokenizeShellCommand(command: string): string[] | null {
 type ShellCommandSplit = {
   readonly firstCommand: string;
   readonly remainingCommand: string | null;
+  readonly separator: string | null;
 };
 
 type Heredoc = {
@@ -425,6 +446,7 @@ function commandAfterHeredocs(
 
 function splitFirstShellCommand(command: string): ShellCommandSplit {
   let quote: '"' | "'" | null = null;
+  let powerShellHereStringQuote: '"' | "'" | null = null;
   let escaping = false;
   let inBackticks = false;
   let inComment = false;
@@ -437,6 +459,17 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
 
   for (let index = 0; index < command.length; index += 1) {
     const character = command[index]!;
+    if (powerShellHereStringQuote !== null) {
+      if (
+        character === powerShellHereStringQuote &&
+        command[index + 1] === "@" &&
+        (index === 0 || command[index - 1] === "\n")
+      ) {
+        powerShellHereStringQuote = null;
+        index += 1;
+      }
+      continue;
+    }
     if (inComment) {
       if (character !== "\n") continue;
       inComment = false;
@@ -456,6 +489,15 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
     }
     if (quote !== null) {
       if (character === quote) quote = null;
+      continue;
+    }
+    if (
+      character === "@" &&
+      (command[index + 1] === '"' || command[index + 1] === "'") &&
+      (command[index + 2] === "\n" || (command[index + 2] === "\r" && command[index + 3] === "\n"))
+    ) {
+      powerShellHereStringQuote = command[index + 1] as '"' | "'";
+      index += 1;
       continue;
     }
     if (character === '"' || character === "'") {
@@ -501,7 +543,7 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
       const stripTabs = command[index + 2] === "-";
       const delimiter = readHeredocDelimiter(command, index + (stripTabs ? 3 : 2), stripTabs);
       if (delimiter === null) {
-        return { firstCommand: command.trim(), remainingCommand: null };
+        return { firstCommand: command.trim(), remainingCommand: null, separator: null };
       }
       heredocs.push(delimiter.heredoc);
       index = delimiter.end - 1;
@@ -533,10 +575,16 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
       return {
         firstCommand,
         remainingCommand: remainingCommand || null,
+        separator: separator
+          ? command.slice(separator.index, separator.index + separator.length)
+          : "\n",
       };
     }
     if (heredocs.length > 0) {
-      separatorBeforeHeredocs ??= { index, length: isDoubleOperator ? 2 : 1 };
+      separatorBeforeHeredocs ??= {
+        index,
+        length: isDoubleOperator ? 2 : 1,
+      };
       if (isDoubleOperator) index += 1;
       continue;
     }
@@ -545,13 +593,18 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
     let nextCommandIndex = index + (isDoubleOperator ? 2 : 1);
     while (/\s/u.test(command[nextCommandIndex] ?? "")) nextCommandIndex += 1;
     const nextCommand = command.slice(nextCommandIndex).trim();
-    return { firstCommand, remainingCommand: nextCommand || null };
+    return {
+      firstCommand,
+      remainingCommand: nextCommand || null,
+      separator: isDoubleOperator ? command.slice(index, index + 2) : character,
+    };
   }
 
   if (inComment) comments.push({ start: commentStart, end: command.length });
   return {
     firstCommand: commandWithoutShellComments(command, command.length, comments).trim(),
     remainingCommand: null,
+    separator: null,
   };
 }
 
@@ -809,21 +862,21 @@ function windowsShellPayloadProgramName(
   return { matched: false, program: null };
 }
 
-function startProcessProgramName(
-  command: string,
-  tokens: ReadonlyArray<string>,
-  start: number,
-): string | null {
-  const literalFilePath = command.match(/\s-FilePath\s+([\s\S]*)$/iu)?.[1];
-  if (literalFilePath) return leadingPowerShellLiteral(literalFilePath);
-
-  const filePathIndex = tokens.findIndex(
-    (token, index) => index >= start && token.toLowerCase() === "-filepath",
-  );
-  if (filePathIndex !== -1) return staticProgramName(tokens[filePathIndex + 1] ?? "");
-
-  const target = tokens[start];
-  return target && !target.startsWith("-") ? staticProgramName(target) : null;
+function startProcessProgramName(tokens: ReadonlyArray<string>, start: number): string | null {
+  for (let index = start; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    const option = token.toLowerCase();
+    if (option === "-filepath") return staticProgramName(tokens[index + 1] ?? "");
+    if (START_PROCESS_FLAGS.has(option)) continue;
+    if (START_PROCESS_OPTIONS_WITH_VALUE.has(option)) {
+      if (tokens[index + 1] === undefined) return null;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) return null;
+    return staticProgramName(token);
+  }
+  return null;
 }
 
 function literalAssignmentProgram(
@@ -1021,6 +1074,16 @@ function parseCommandProgramName(
   // separators. Keep the label conservative instead of scanning the test body.
   if (commandWithoutComments.startsWith("[[")) return null;
   const commandSplit = splitFirstShellCommand(commandWithoutComments);
+  if (/^@["'](?:\r?\n)/u.test(commandSplit.firstCommand.trimStart())) {
+    return commandSplit.remainingCommand
+      ? commandProgramNameInternal(
+          commandSplit.remainingCommand,
+          depth,
+          "shell",
+          segmentsRemaining - 1,
+        )
+      : null;
+  }
   const powerShellAssignment = powerShellAssignmentProgramName(
     commandSplit.firstCommand,
     depth,
@@ -1176,7 +1239,7 @@ function parseCommandProgramName(
       if (payload.matched) return payload.program;
     }
     if (lowerTokenProgram === "start-process") {
-      const startedProgram = startProcessProgramName(commandSplit.firstCommand, tokens, index + 1);
+      const startedProgram = startProcessProgramName(tokens, index + 1);
       if (startedProgram !== null) return startedProgram;
     }
     if (
@@ -1218,7 +1281,8 @@ function parseCommandProgramName(
       isUnqualifiedToken &&
       tokenProgram &&
       NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram) &&
-      !TERMINAL_SHELL_PROGRAMS.has(tokenProgram) &&
+      (!TERMINAL_SHELL_PROGRAMS.has(tokenProgram) ||
+        (tokenProgram === "false" && commandSplit.separator !== "&&")) &&
       commandSplit.remainingCommand
     ) {
       return commandProgramNameInternal(
