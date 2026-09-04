@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - one synchronous tar probe at module load, outside any Effect runtime.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -88,6 +90,14 @@ import {
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+// Three tests stage a real WSL runtime archive with the host's tar. Windows
+// ships bsdtar as tar.exe, but spawning it through the Effect spawner fails
+// there (spawn UNKNOWN) and the archive it would write is for WSL anyway, so
+// those tests run only where a GNU-compatible tar answers.
+const tarSupported =
+  NodeChildProcess.spawnSync("tar", ["--version"], { encoding: "utf8" }).status === 0 &&
+  HostProcessPlatform.defaultValue() !== "win32";
 
 // A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
@@ -1040,38 +1050,40 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("validates every ASAR-unpacked native in the packaged Windows payload", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        const result = yield* validateWindowsPackagedPayload({
-          stageDistDir: fixture.stageDistDir,
-          appExecutableName: fixture.appExecutableName,
-          targetArch: "x64",
-        });
+  it.effect.skipIf(!tarSupported)(
+    "validates every ASAR-unpacked native in the packaged Windows payload",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+          const result = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch: "x64",
+          });
 
-        const secondAsarPath = path.join(path.dirname(fixture.generatedAsarPath), "second.asar");
-        yield* packWindowsServerAsar({
-          sourceDir: fixture.sourceDir,
-          asarPath: secondAsarPath,
-          arch: "x64",
-        });
-        const [firstAsar, secondAsar] = yield* Effect.all([
-          fs.readFile(fixture.generatedAsarPath),
-          fs.readFile(secondAsarPath),
-        ]);
+          const secondAsarPath = path.join(path.dirname(fixture.generatedAsarPath), "second.asar");
+          yield* packWindowsServerAsar({
+            sourceDir: fixture.sourceDir,
+            asarPath: secondAsarPath,
+            arch: "x64",
+          });
+          const [firstAsar, secondAsar] = yield* Effect.all([
+            fs.readFile(fixture.generatedAsarPath),
+            fs.readFile(secondAsarPath),
+          ]);
 
-        assert.equal(result.packagedAppDir, fixture.packagedAppDir);
-        assert.deepStrictEqual(result.unpackedFiles, ["node_modules/native/addon.node"]);
-        assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
-        assert.deepStrictEqual(secondAsar, firstAsar);
-      }),
-    ),
+          assert.equal(result.packagedAppDir, fixture.packagedAppDir);
+          assert.deepStrictEqual(result.unpackedFiles, ["node_modules/native/addon.node"]);
+          assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
+          assert.deepStrictEqual(secondAsar, firstAsar);
+        }),
+      ),
   );
 
-  it.effect("validates the emitted WSL archive and its SHA-256 sidecar", () =>
+  it.effect.skipIf(!tarSupported)("validates the emitted WSL archive and its SHA-256 sidecar", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = yield* makeWindowsPayloadFixture({
@@ -1235,11 +1247,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         command.args.some((arg) => arg.endsWith("build-browser-secret.mjs")),
       );
       assert.isDefined(helper);
+      const path = yield* Path.Path;
       assert.deepStrictEqual(helper.args.slice(-4), [
         "--arch",
         "x64",
         "--output",
-        "/stage/resources/browser-secret/t3-browser-secret",
+        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
       ]);
     }).pipe(
       Effect.provide(
@@ -1445,23 +1458,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("rejects a sidecar whose extracted server bundle cannot resolve", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeWindowsPayloadFixture({
-          copyUnpackedNatives: true,
-          serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
-        });
-        const error = yield* validateWindowsPackagedPayload({
-          stageDistDir: fixture.stageDistDir,
-          appExecutableName: fixture.appExecutableName,
-          targetArch: "x64",
-        }).pipe(Effect.flip);
+  it.effect.skipIf(!tarSupported)(
+    "rejects a sidecar whose extracted server bundle cannot resolve",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
+          });
+          const error = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch: "x64",
+          }).pipe(Effect.flip);
 
-        assert.instanceOf(error, BundleNotSelfContainedError);
-        assert.include(error.output, "t3code-deliberately-missing-package");
-      }),
-    ),
+          assert.instanceOf(error, BundleNotSelfContainedError);
+          assert.include(error.output, "t3code-deliberately-missing-package");
+        }),
+      ),
   );
 
   it.effect("preserves both Linux icon resize failures with structural context", () => {
@@ -1701,7 +1716,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
-      assert.match(String(mac.sign), /\/scripts\/sign-macos\.ts$/);
+      assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
