@@ -122,7 +122,7 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
             Effect.mapError(
               (cause) =>
                 new RemoteEnvironmentAuthFetchError({
-                  message: `Could not authorize the environment request: ${cause.detail}`,
+                  message: "Could not authorize the environment request.",
                   cause,
                 }),
             ),

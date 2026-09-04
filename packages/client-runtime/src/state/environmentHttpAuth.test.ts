@@ -462,7 +462,11 @@ describe("authenticated environment HTTP requests", () => {
         remoteAuthorization: Option.some(remoteAuthorization),
       }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
 
-      expect(error).toMatchObject({ _tag: "RemoteEnvironmentAuthFetchError", cause: failure });
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthFetchError",
+        message: "Could not authorize the environment request.",
+        cause: failure,
+      });
       expect(harness.calls).toEqual([]);
       expect(harness.proofs).toEqual([]);
     }),
