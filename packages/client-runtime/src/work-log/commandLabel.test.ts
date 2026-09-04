@@ -201,6 +201,49 @@ describe("commandProgramName", () => {
   });
 
   it.each([
+    ["& 'C:\\Program Files\\nodejs\\node.exe' script.js", "node.exe"],
+    ['& "$env:WINDIR\\Microsoft.NET\\Framework64\\v4\\csc.exe" file.cs', "csc.exe"],
+  ])("resolves literal PowerShell call operators: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["$env:CI='1'; npm test", "npm"],
+    ["$value = 'configured'; node app.js", "node"],
+    ["$process = Get-Process node; $process.Id", "Get-Process"],
+    ["$tmp = Join-Path $env:TEMP repo; git clone example", "Join-Path"],
+    ["$html = (Invoke-WebRequest https://example.com).Content", "Invoke-WebRequest"],
+    ["$process = Start-Process -FilePath .\\app.exe -PassThru; $process.Id", "app.exe"],
+  ])("labels commands inside simple PowerShell assignments: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["cmd /c bcdedit /enum", "bcdedit"],
+    ['cmd.exe /d /s /c "cd C:\\work && npm test"', "npm"],
+    [
+      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
+      "doctor.ps1",
+    ],
+    ['pwsh -NoProfile -Command "Set-Location C:\\work; pnpm test"', "pnpm"],
+  ])("unwraps Windows shell launchers: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["Set-Location C:\\work; npm test", "npm"],
+    ["Push-Location C:\\work; node app.js", "node"],
+    ["Start-Process -FilePath node -ArgumentList server.js", "node"],
+    ['Start-Process "C:\\Program Files\\Example\\app.exe"', "app.exe"],
+    ['Start-Process -FilePath ".\\dist\\Example App.exe" -PassThru', "Example App.exe"],
+    [".\\.venv\\Scripts\\python.exe script.py", "python.exe"],
+    ["$env:LOCALAPPDATA\\Programs\\tool.exe --version", "tool.exe"],
+    ['"=== CHECK FILE ==="; Get-Content file.txt', "Get-Content"],
+  ])("handles common PowerShell setup and launch commands: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
     ["timeout --help", "timeout"],
     ["nohup --version", "nohup"],
     ["arch", "arch"],
@@ -236,6 +279,12 @@ describe("commandProgramName", () => {
     "${TOOL} --version",
     "%TOOL% --version",
     "!TOOL! --version",
+    "& $tool --version",
+    "& { Get-Process }",
+    "$value = 'configured'",
+    "$headers = @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json' }; Invoke-WebRequest https://example.com",
+    '"sha256(value)=$hash"',
+    "broken{",
     "@echo off",
     ":: comment",
     "time -- npm test",
@@ -244,6 +293,8 @@ describe("commandProgramName", () => {
     "coproc worker { npm test; }",
     "cd [first|second] && pnpm test",
     "npm) --version",
+    "try { Invoke-WebRequest https://example.com } catch { Write-Error $_ }",
+    "for($i=0; $i -lt 2; $i++){ Start-Sleep 1 }",
     "# comment only",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();

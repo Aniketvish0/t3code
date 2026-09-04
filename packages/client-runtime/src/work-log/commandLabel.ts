@@ -2,12 +2,31 @@ type CommandWrapper = "env" | "sudo";
 type CommandProgramContext = "exec" | "shell";
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
+const WINDOWS_SHELL_PROGRAMS = new Set([
+  "cmd",
+  "cmd.exe",
+  "powershell",
+  "powershell.exe",
+  "pwsh",
+  "pwsh.exe",
+]);
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
+const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
+const POWERSHELL_FLAGS = new Set(["-mta", "-nologo", "-noninteractive", "-noprofile", "-sta"]);
+const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
+  "-configurationname",
+  "-executionpolicy",
+  "-inputformat",
+  "-outputformat",
+  "-version",
+  "-windowstyle",
+  "-workingdirectory",
+]);
 const SKIPPABLE_SUDO_PROBES = new Set(["[", "[[", "test", "true"]);
 const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#!%@:";
-const NON_PROGRAM_SUFFIX_CHARACTERS = ")]}`";
+const NON_PROGRAM_SUFFIX_CHARACTERS = "){]}`";
 
 // These tokens describe shell syntax or shell-local control flow, not a useful
 // executable name. Falling back to "command" is less misleading than labels
@@ -30,6 +49,7 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "builtin",
   "caller",
   "case",
+  "catch",
   "cd",
   "command",
   "compgen",
@@ -55,6 +75,7 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "fc",
   "fg",
   "fi",
+  "finally",
   "for",
   "foreach",
   "function",
@@ -91,6 +112,7 @@ const NON_DESCRIPTIVE_SHELL_PROGRAMS = new Set([
   "time",
   "times",
   "trap",
+  "try",
   "true",
   "type",
   "typeset",
@@ -111,6 +133,7 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "begin",
   "break",
   "case",
+  "catch",
   "continue",
   "coproc",
   "do",
@@ -124,6 +147,7 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "exit",
   "false",
   "fi",
+  "finally",
   "for",
   "foreach",
   "function",
@@ -136,6 +160,7 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "select",
   "switch",
   "then",
+  "try",
   "until",
   "while",
 ]);
@@ -630,6 +655,167 @@ function transparentWrapperCommandIndex(
   return null;
 }
 
+function staticProgramName(value: string): string | null {
+  const trimmedValue = value.trim();
+  if (!trimmedValue || /^[A-Za-z][A-Za-z0-9+.-]*:(?![\\/])/u.test(trimmedValue)) return null;
+  const program = trimmedValue.split(/[\\/]/u).at(-1);
+  if (
+    !program ||
+    (/\s/u.test(program) && !/[\\/]/u.test(trimmedValue)) ||
+    NON_PROGRAM_PREFIX_CHARACTERS.includes(program[0] ?? "") ||
+    NON_PROGRAM_SUFFIX_CHARACTERS.includes(program.at(-1) ?? "")
+  ) {
+    return null;
+  }
+  return program;
+}
+
+function leadingPowerShellLiteral(command: string): string | null {
+  const input = command.trimStart();
+  const quote = input[0];
+  if (quote !== '"' && quote !== "'") return staticProgramName(input.match(/^\S+/u)?.[0] ?? "");
+
+  let value = "";
+  for (let index = 1; index < input.length; index += 1) {
+    const character = input[index]!;
+    if (character === "`" && input[index + 1] !== undefined) {
+      value += input[index + 1];
+      index += 1;
+      continue;
+    }
+    if (character === quote) {
+      if (quote === "'" && input[index + 1] === "'") {
+        value += "'";
+        index += 1;
+        continue;
+      }
+      return staticProgramName(value);
+    }
+    value += character;
+  }
+  return null;
+}
+
+function powerShellCallOperatorProgramName(command: string): string | null | undefined {
+  const match = command.match(/^\s*&\s+([\s\S]*)$/u);
+  return match ? leadingPowerShellLiteral(match[1]!) : undefined;
+}
+
+type PowerShellAssignment = {
+  readonly matched: boolean;
+  readonly program: string | null;
+};
+
+function powerShellAssignmentProgramName(
+  command: string,
+  depth: number,
+  remainingCommand: string | null,
+): PowerShellAssignment {
+  const assignment = command.match(
+    /^\s*\$(?:(env|global|local|script):)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*([\s\S]*)$/iu,
+  );
+  if (!assignment) return { matched: false, program: null };
+
+  // Environment assignments are setup. Their right-hand side is a value, not
+  // a command, so prefer the next top-level segment when one exists.
+  if (assignment[1]?.toLowerCase() === "env") {
+    return {
+      matched: true,
+      program: remainingCommand
+        ? commandProgramNameInternal(remainingCommand, depth, "shell")
+        : null,
+    };
+  }
+
+  const value = assignment[2]!.trim();
+  // The POSIX-oriented segment splitter does not balance PowerShell arrays or
+  // hashtables. Do not mistake a key after an internal semicolon for a command.
+  if (/^(?:\[ordered\]\s*)?@\s*[{(]/iu.test(value)) {
+    return { matched: true, program: null };
+  }
+  const calledProgram = powerShellCallOperatorProgramName(value);
+  if (calledProgram !== undefined) return { matched: true, program: calledProgram };
+
+  const directCommand = value.match(/^(?:@?\(\s*)?([A-Za-z][A-Za-z0-9_.-]*)\b/u)?.[1];
+  if (directCommand && !NON_DESCRIPTIVE_SHELL_PROGRAMS.has(directCommand.toLowerCase())) {
+    const parsedCommand = commandProgramNameInternal(value, depth + 1, "shell");
+    return { matched: true, program: parsedCommand ?? directCommand };
+  }
+
+  return {
+    matched: true,
+    program: remainingCommand ? commandProgramNameInternal(remainingCommand, depth, "shell") : null,
+  };
+}
+
+type WindowsShellPayload = {
+  readonly matched: boolean;
+  readonly program: string | null;
+};
+
+function windowsShellPayloadProgramName(
+  shell: string,
+  tokens: ReadonlyArray<string>,
+  start: number,
+  depth: number,
+): WindowsShellPayload {
+  if (shell === "cmd" || shell === "cmd.exe") {
+    for (let index = start; index < tokens.length; index += 1) {
+      const option = tokens[index]!.toLowerCase();
+      if (option !== "/c" && option !== "/k") continue;
+      const payload = tokens[index + 1];
+      return {
+        matched: true,
+        program: payload ? commandProgramNameInternal(payload, depth + 1, "shell") : null,
+      };
+    }
+    return { matched: false, program: null };
+  }
+
+  for (let index = start; index < tokens.length; index += 1) {
+    const option = tokens[index]!.toLowerCase();
+    if (option === "-command" || option === "-c") {
+      const payload = tokens[index + 1];
+      return {
+        matched: true,
+        program: payload ? commandProgramNameInternal(payload, depth + 1, "shell") : null,
+      };
+    }
+    if (option === "-file" || option === "-f") {
+      return { matched: true, program: staticProgramName(tokens[index + 1] ?? "") };
+    }
+    if (option === "-encodedcommand" || option === "-enc" || option === "-e") {
+      return { matched: true, program: null };
+    }
+    if (POWERSHELL_OPTIONS_WITH_VALUE.has(option)) {
+      index += 1;
+      continue;
+    }
+    if (POWERSHELL_FLAGS.has(option)) continue;
+    if (!option.startsWith("-")) {
+      return { matched: true, program: staticProgramName(tokens[index]!) };
+    }
+  }
+  return { matched: false, program: null };
+}
+
+function startProcessProgramName(
+  command: string,
+  tokens: ReadonlyArray<string>,
+  start: number,
+): string | null {
+  const literalFilePath = command.match(/\s-FilePath\s+([\s\S]*)$/iu)?.[1];
+  if (literalFilePath) return leadingPowerShellLiteral(literalFilePath);
+
+  const filePathIndex = tokens.findIndex(
+    (token, index) => index >= start && token.toLowerCase() === "-filepath",
+  );
+  if (filePathIndex !== -1) return staticProgramName(tokens[filePathIndex + 1] ?? "");
+
+  const target = tokens[start];
+  return target && !target.startsWith("-") ? staticProgramName(target) : null;
+}
+
 function literalAssignmentProgram(
   token: string,
 ): { readonly name: string; readonly program: string | null } | null {
@@ -646,15 +832,7 @@ function literalAssignmentProgram(
     return { name, program: null };
   }
 
-  const program = value.split(/[\\/]/u).at(-1);
-  if (
-    !program ||
-    NON_PROGRAM_PREFIX_CHARACTERS.includes(program[0] ?? "") ||
-    NON_PROGRAM_SUFFIX_CHARACTERS.includes(program.at(-1) ?? "")
-  ) {
-    return { name, program: null };
-  }
-  return { name, program };
+  return { name, program: staticProgramName(value) };
 }
 
 function referencedCommandAlias(token: string): string | null {
@@ -798,9 +976,37 @@ function parseCommandProgramName(
   if (depth >= 8) return null;
   const commandWithoutComments = commandWithoutLeadingShellComments(command);
   if (commandWithoutComments === null) return null;
+  if (
+    /^(?:catch|finally|for|foreach|function|if|param|switch|try|while)\s*[{(]/iu.test(
+      commandWithoutComments,
+    )
+  ) {
+    return null;
+  }
   const commandSplit = splitFirstShellCommand(commandWithoutComments);
+  const powerShellAssignment = powerShellAssignmentProgramName(
+    commandSplit.firstCommand,
+    depth,
+    commandSplit.remainingCommand,
+  );
+  if (powerShellAssignment.matched) return powerShellAssignment.program;
+  const windowsPath = commandSplit.firstCommand.match(
+    /^\s*((?:\.{1,2}|%[A-Za-z_][A-Za-z0-9_]*%|\$env:[A-Za-z_][A-Za-z0-9_]*)\\\S+)/iu,
+  )?.[1];
+  if (windowsPath) return staticProgramName(windowsPath);
   const tokens = tokenizeShellCommand(withoutShellLineContinuations(commandSplit.firstCommand));
   if (tokens === null) return null;
+  const firstCharacter = commandSplit.firstCommand.trimStart()[0];
+  if (
+    tokens.length === 1 &&
+    (firstCharacter === '"' || firstCharacter === "'") &&
+    /[\s()=]/u.test(tokens[0] ?? "") &&
+    !/[\\/]/u.test(tokens[0] ?? "")
+  ) {
+    return commandSplit.remainingCommand
+      ? commandProgramNameInternal(commandSplit.remainingCommand, depth, context)
+      : null;
+  }
   let index = 0;
   let wrapper: CommandWrapper | null = null;
   let executionContext = context;
@@ -897,6 +1103,15 @@ function parseCommandProgramName(
         return script ? commandProgramNameInternal(script, depth + 1, "shell") : null;
       }
     }
+    const lowerTokenProgram = tokenProgram?.toLowerCase();
+    if (lowerTokenProgram && WINDOWS_SHELL_PROGRAMS.has(lowerTokenProgram)) {
+      const payload = windowsShellPayloadProgramName(lowerTokenProgram, tokens, index + 1, depth);
+      if (payload.matched) return payload.program;
+    }
+    if (lowerTokenProgram === "start-process") {
+      const startedProgram = startProcessProgramName(commandSplit.firstCommand, tokens, index + 1);
+      if (startedProgram !== null) return startedProgram;
+    }
     if (
       executionContext === "shell" &&
       isUnqualifiedToken &&
@@ -940,6 +1155,15 @@ function parseCommandProgramName(
       return commandProgramNameInternal(commandSplit.remainingCommand, depth, "shell");
     }
     if (
+      executionContext === "shell" &&
+      isUnqualifiedToken &&
+      lowerTokenProgram &&
+      POWERSHELL_SETUP_PROGRAMS.has(lowerTokenProgram) &&
+      commandSplit.remainingCommand
+    ) {
+      return commandProgramNameInternal(commandSplit.remainingCommand, depth, "shell");
+    }
+    if (
       !tokenProgram ||
       (isUnqualifiedToken && NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram)) ||
       NON_PROGRAM_PREFIX_CHARACTERS.includes(tokenProgram[0] ?? "") ||
@@ -963,6 +1187,8 @@ function commandProgramNameInternal(
   depth: number,
   context: CommandProgramContext,
 ): string | null {
+  const calledProgram = powerShellCallOperatorProgramName(command);
+  if (calledProgram !== undefined) return calledProgram;
   return (
     parseCommandProgramName(command, depth, context) ??
     (context === "shell" ? literalCommandAliasProgramName(command) : null)
