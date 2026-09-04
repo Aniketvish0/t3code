@@ -440,9 +440,50 @@ describe("authenticated environment HTTP requests", () => {
 
       expect(yield* Fiber.join(pending)).toMatchObject({
         _tag: "RemoteEnvironmentAuthTimeoutError",
+        requestUrl: `${PREPARED.httpBaseUrl}/api/auth/session`,
         timeoutMs: 100,
       });
       expect(harness.calls).toEqual([]);
+    }),
+  );
+
+  it.effect("reports the current endpoint when the total timeout expires during HTTP", () =>
+    Effect.gen(function* () {
+      const requested = Promise.withResolvers<void>();
+      const response = Promise.withResolvers<Response>();
+      const harness = makeHarness(() => {
+        requested.resolve();
+        return response.promise;
+      });
+      const authorizing = yield* Deferred.make<void>();
+      const authorize = yield* Deferred.make<void>();
+      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+        ...harness.remoteAuthorization,
+        authorizeDpopHttp: (input) =>
+          Deferred.succeed(authorizing, undefined).pipe(
+            Effect.andThen(Deferred.await(authorize)),
+            Effect.andThen(harness.remoteAuthorization.authorizeDpopHttp(input)),
+          ),
+      });
+      const pending = yield* fetchEnvironmentSessionState({
+        ...harness.input,
+        remoteAuthorization: Option.some(remoteAuthorization),
+        timeoutMs: 100,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip, Effect.forkChild);
+      yield* Deferred.await(authorizing);
+      yield* TestClock.adjust(25);
+      yield* Deferred.succeed(authorize, undefined);
+      yield* Effect.promise(() => requested.promise);
+      yield* TestClock.adjust(75);
+
+      expect(yield* Fiber.join(pending)).toMatchObject({
+        _tag: "RemoteEnvironmentAuthTimeoutError",
+        requestUrl: `${CURRENT_ORIGIN}/api/auth/session`,
+        timeoutMs: 100,
+      });
+      expect(harness.calls.map((call) => call.url)).toEqual([`${CURRENT_ORIGIN}/api/auth/session`]);
+      expect(harness.authorizations).toHaveLength(1);
+      response.resolve(Response.json(SESSION));
     }),
   );
 

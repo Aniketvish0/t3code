@@ -86,24 +86,24 @@ export const buildEnvironmentAuthHeaders = (
  */
 export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
   "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
-)(
-  function* <A, E, R>(input: {
-    readonly prepared: PreparedConnection;
-    readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-    readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
-    readonly method: HttpMethod.HttpMethod;
-    readonly url: (httpBaseUrl: string) => string;
-    readonly timeoutMs: number;
-    readonly request: (input: {
-      readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>;
-      readonly headers: EnvironmentHttpAuthHeaders;
-    }) => Effect.Effect<A, E, R>;
-    /** Some endpoints report rejected credentials in a successful response. */
-    readonly isUnauthorizedResponse?: (response: NoInfer<A>) => boolean;
-  }): Effect.fn.Return<A, RemoteEnvironmentRequestError, HttpClient.HttpClient | R> {
+)(function* <A, E, R>(input: {
+  readonly prepared: PreparedConnection;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly method: HttpMethod.HttpMethod;
+  readonly url: (httpBaseUrl: string) => string;
+  readonly timeoutMs: number;
+  readonly request: (input: {
+    readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>;
+    readonly headers: EnvironmentHttpAuthHeaders;
+  }) => Effect.Effect<A, E, R>;
+  /** Some endpoints report rejected credentials in a successful response. */
+  readonly isUnauthorizedResponse?: (response: NoInfer<A>) => boolean;
+}): Effect.fn.Return<A, RemoteEnvironmentRequestError, HttpClient.HttpClient | R> {
+  let httpBaseUrl = input.prepared.httpBaseUrl;
+  return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
-      let httpBaseUrl = input.prepared.httpBaseUrl;
       let authorization = input.prepared.httpAuthorization;
       if (authorization?._tag === "Dpop") {
         const remote = input.remoteAuthorization;
@@ -173,18 +173,11 @@ export const executeAuthenticatedEnvironmentHttpRequest = Effect.fn(
       }
       return result.success;
     }
-  },
-  (effect, input) =>
-    effect.pipe(
-      Effect.timeoutOrElse({
-        duration: input.timeoutMs,
-        orElse: () =>
-          Effect.fail(
-            new RemoteEnvironmentAuthTimeoutError(
-              input.url(input.prepared.httpBaseUrl),
-              input.timeoutMs,
-            ),
-          ),
-      }),
-    ),
-);
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: input.timeoutMs,
+      orElse: () =>
+        Effect.fail(new RemoteEnvironmentAuthTimeoutError(input.url(httpBaseUrl), input.timeoutMs)),
+    }),
+  );
+});
