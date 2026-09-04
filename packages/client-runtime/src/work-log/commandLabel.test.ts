@@ -63,6 +63,7 @@ describe("commandProgramName", () => {
     'select item in one two; do echo "$item"; done',
     "function check() { vp test; }",
     "check() { vp test; }",
+    "k(){ echo ok; }; k",
     "{ vp test; }",
     "(vp test)",
     "(( count += 1 ))",
@@ -147,6 +148,8 @@ describe("commandProgramName", () => {
   it.each([
     ["set -eu; npm test", "npm"],
     ["true && npm test", "npm"],
+    ["sudo -n true && npm test", "npm"],
+    ["sudo -n true; echo checked", "echo"],
     ["test -d node_modules || vp i", "vp"],
     ["[ -d node_modules ] || vp i", "vp"],
   ])("skips non-descriptive shell commands before a useful program: %s", (command, program) => {
@@ -179,6 +182,32 @@ describe("commandProgramName", () => {
     ["exec sh -c 'cd /tmp\nnpm test'", "npm"],
     ["exec bash -c 'set -e\nnpm test'", "npm"],
   ])("unwraps shell command wrappers: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["timeout 10 pnpm test", "pnpm"],
+    ["timeout 10s python3 script.py", "python3"],
+    ["gtimeout 1.5 node app.js", "node"],
+    ["nohup npx expo start >/tmp/metro.log 2>&1 &", "npx"],
+    ["nohup -- env CI=1 bun test", "bun"],
+    ["arch -x86_64 ./build/app-under-test", "app-under-test"],
+    ["arch -arch arm64 /opt/tools/check", "check"],
+    ["bundle exec pod install", "pod"],
+    ["timeout 30 nohup env CI=1 node app.js", "node"],
+    ["timeout 60 script -q /dev/null env CI=1 node app.js", "node"],
+  ])("unwraps process-launch wrappers: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    ["timeout --help", "timeout"],
+    ["nohup --version", "nohup"],
+    ["arch", "arch"],
+    ["bundle install", "bundle"],
+    ["script output.log", "script"],
+    ["/usr/bin/timeout 10 node app.js", "timeout"],
+  ])("keeps process-launch wrappers when no safe payload is present: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
@@ -273,6 +302,30 @@ describe("commandProgramName", () => {
 
   it("skips a shell array assignment before the command", () => {
     expect(commandProgramName("items=(one two); npm test")).toBe("npm");
+  });
+
+  it.each([
+    ['EMU="/opt/android/emulator"; "$EMU" -list-avds', "emulator"],
+    ["AAPT=/opt/android/aapt2\n$AAPT dump badging app.apk", "aapt2"],
+    [
+      'SSH=(ssh -i /tmp/key -o IdentitiesOnly=yes); HOST=user@example; "${SSH[@]}" "$HOST" uptime',
+      "ssh",
+    ],
+    ["SCP=(/usr/bin/scp -i /tmp/key); if true; then ${SCP[@]} file user@example:/tmp; fi", "scp"],
+    ['TOOL="/Applications/My Tool/bin/check"; "$TOOL" --verbose', "check"],
+  ])("resolves literal command aliases from earlier shell segments: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    'TOOL=$(pick-command); "$TOOL" --version',
+    'TOOL="git status"; "$TOOL"',
+    "# TOOL=git\n$TOOL status",
+    'TOOL=git true; "$TOOL" status',
+    'TOOL=git; TOOL=$(pick-command); "$TOOL" status',
+    'TOOL=git; unset TOOL; "$TOOL" status',
+  ])("does not evaluate dynamic or non-persistent command aliases: %s", (command) => {
+    expect(commandProgramName(command)).toBeNull();
   });
 
   it.each([

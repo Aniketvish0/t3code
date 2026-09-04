@@ -5,6 +5,7 @@ const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
+const SKIPPABLE_SUDO_PROBES = new Set(["[", "[[", "test", "true"]);
 const NON_PROGRAM_PREFIX_CHARACTERS = "<>(){}[];|&$`#!%@:";
 const NON_PROGRAM_SUFFIX_CHARACTERS = ")]}`";
 
@@ -588,6 +589,132 @@ function serializeShellTokens(tokens: ReadonlyArray<string>): string {
   return tokens.map((token) => `'${token.replaceAll("'", "'\\''")}'`).join(" ");
 }
 
+function transparentWrapperCommandIndex(
+  wrapper: string,
+  tokens: ReadonlyArray<string>,
+  index: number,
+): number | null {
+  if (wrapper === "bundle") {
+    return tokens[index + 1] === "exec" && tokens[index + 2] !== undefined ? index + 2 : null;
+  }
+
+  if (wrapper === "nohup") {
+    let targetIndex = index + 1;
+    if (tokens[targetIndex] === "--") targetIndex += 1;
+    const target = tokens[targetIndex];
+    return target && !target.startsWith("-") ? targetIndex : null;
+  }
+
+  if (wrapper === "script") {
+    // BSD `script` takes an output file before the optional command. Requiring
+    // an option and both operands avoids guessing about a plain `script file`.
+    return /^-[adkpqr]+$/u.test(tokens[index + 1] ?? "") && tokens[index + 3] !== undefined
+      ? index + 3
+      : null;
+  }
+
+  if (wrapper === "arch") {
+    if (/^-(?:arm64|arm64e|i386|x86_64)$/u.test(tokens[index + 1] ?? "")) {
+      return tokens[index + 2] !== undefined ? index + 2 : null;
+    }
+    return tokens[index + 1] === "-arch" && tokens[index + 3] !== undefined ? index + 3 : null;
+  }
+
+  if (wrapper === "timeout" || wrapper === "gtimeout") {
+    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[index + 1] ?? "") &&
+      tokens[index + 2] !== undefined
+      ? index + 2
+      : null;
+  }
+
+  return null;
+}
+
+function literalAssignmentProgram(
+  token: string,
+): { readonly name: string; readonly program: string | null } | null {
+  const assignment = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/su);
+  if (!assignment) return null;
+  const name = assignment[1]!;
+  let value = assignment[2]!.trim();
+  if (!value || /[$`]/u.test(value)) return { name, program: null };
+
+  if (value.startsWith("(") && value.endsWith(")")) {
+    const arrayTokens = tokenizeShellCommand(value.slice(1, -1));
+    value = arrayTokens?.[0] ?? "";
+  } else if (/\s/u.test(value) && !/[\\/]/u.test(value)) {
+    return { name, program: null };
+  }
+
+  const program = value.split(/[\\/]/u).at(-1);
+  if (
+    !program ||
+    NON_PROGRAM_PREFIX_CHARACTERS.includes(program[0] ?? "") ||
+    NON_PROGRAM_SUFFIX_CHARACTERS.includes(program.at(-1) ?? "")
+  ) {
+    return { name, program: null };
+  }
+  return { name, program };
+}
+
+function referencedCommandAlias(token: string): string | null {
+  const reference = token.match(
+    /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)(?:\[@\])?\})$/u,
+  );
+  return reference?.[1] ?? reference?.[2] ?? null;
+}
+
+// Recover only literal aliases declared by an earlier top-level shell segment.
+// This covers common `SSH=(ssh ...)` and `TOOL=/path/to/tool` forms without
+// evaluating expansions or trying to model general shell state.
+function literalCommandAliasProgramName(command: string): string | null {
+  const aliases = new Map<string, string>();
+  let remainingCommand: string | null = command;
+
+  for (let segmentCount = 0; remainingCommand && segmentCount < 64; segmentCount += 1) {
+    const commandWithoutComments = commandWithoutLeadingShellComments(remainingCommand);
+    if (commandWithoutComments === null) return null;
+    const commandSplit = splitFirstShellCommand(commandWithoutComments);
+    const tokens = tokenizeShellCommand(withoutShellLineContinuations(commandSplit.firstCommand));
+    if (tokens === null) return null;
+
+    let commandIndex = tokens[0] === "do" || tokens[0] === "then" ? 1 : 0;
+    while (commandIndex < tokens.length) {
+      const indexAfterRedirection = indexAfterShellRedirection(tokens, commandIndex);
+      if (indexAfterRedirection !== null && indexAfterRedirection <= tokens.length) {
+        commandIndex = indexAfterRedirection;
+        continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*\+?=/u.test(tokens[commandIndex] ?? "")) {
+        commandIndex += 1;
+        continue;
+      }
+      break;
+    }
+
+    const aliasName = referencedCommandAlias(tokens[commandIndex] ?? "");
+    const aliasedProgram = aliasName ? aliases.get(aliasName) : undefined;
+    if (aliasedProgram) return aliasedProgram;
+
+    if (tokens[0] === "unset") {
+      for (const name of tokens.slice(1)) aliases.delete(name);
+    }
+
+    const assignmentStart = tokens[0] === "export" ? 1 : 0;
+    const assignments = tokens.slice(assignmentStart).map(literalAssignmentProgram);
+    if (assignments.length > 0 && assignments.every((assignment) => assignment !== null)) {
+      for (const assignment of assignments) {
+        if (assignment.program) aliases.set(assignment.name, assignment.program);
+        else aliases.delete(assignment.name);
+      }
+    }
+
+    remainingCommand = commandSplit.remainingCommand;
+  }
+
+  return null;
+}
+
 function wrappedShellCommandProgramName(
   wrapper: string,
   tokens: ReadonlyArray<string>,
@@ -663,7 +790,7 @@ function wrappedShellCommandProgramName(
   return null;
 }
 
-function commandProgramNameInternal(
+function parseCommandProgramName(
   command: string,
   depth: number,
   context: CommandProgramContext,
@@ -781,6 +908,17 @@ function commandProgramNameInternal(
       if (tokens[index]?.startsWith("-")) return null;
       continue;
     }
+    if (isUnqualifiedToken && tokenProgram) {
+      const targetIndex = transparentWrapperCommandIndex(tokenProgram, tokens, index);
+      if (targetIndex !== null) {
+        const wrappedProgram = commandProgramNameInternal(
+          serializeShellTokens(tokens.slice(targetIndex)),
+          depth + 1,
+          "exec",
+        );
+        if (wrappedProgram !== null) return wrappedProgram;
+      }
+    }
     if (isUnqualifiedToken && tokenProgram && SHELL_COMMAND_WRAPPERS.has(tokenProgram)) {
       return wrappedShellCommandProgramName(
         tokenProgram,
@@ -791,7 +929,8 @@ function commandProgramNameInternal(
       );
     }
     if (
-      executionContext === "shell" &&
+      (executionContext === "shell" ||
+        (wrapper === "sudo" && tokenProgram && SKIPPABLE_SUDO_PROBES.has(tokenProgram))) &&
       isUnqualifiedToken &&
       tokenProgram &&
       NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram) &&
@@ -805,7 +944,8 @@ function commandProgramNameInternal(
       (isUnqualifiedToken && NON_DESCRIPTIVE_SHELL_PROGRAMS.has(tokenProgram)) ||
       NON_PROGRAM_PREFIX_CHARACTERS.includes(tokenProgram[0] ?? "") ||
       NON_PROGRAM_SUFFIX_CHARACTERS.includes(tokenProgram.at(-1) ?? "") ||
-      tokenProgram.endsWith("()")
+      tokenProgram.endsWith("()") ||
+      /^[A-Za-z_][A-Za-z0-9_]*\(\)\{$/u.test(tokenProgram)
     ) {
       return null;
     }
@@ -816,6 +956,17 @@ function commandProgramNameInternal(
     return commandProgramNameInternal(commandSplit.remainingCommand, depth, executionContext);
   }
   return null;
+}
+
+function commandProgramNameInternal(
+  command: string,
+  depth: number,
+  context: CommandProgramContext,
+): string | null {
+  return (
+    parseCommandProgramName(command, depth, context) ??
+    (context === "shell" ? literalCommandAliasProgramName(command) : null)
+  );
 }
 
 export function commandProgramName(command: string, depth = 0): string | null {
