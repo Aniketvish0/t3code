@@ -223,12 +223,14 @@ describe("commandProgramName", () => {
 
   it.each([
     ["cmd /c bcdedit /enum", "bcdedit"],
+    ["cmd /c cd C:\\work && npm test", "npm"],
     ['cmd.exe /d /s /c "cd C:\\work && npm test"', "npm"],
     [
       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
       "doctor.ps1",
     ],
     ['pwsh -NoProfile -Command "Set-Location C:\\work; pnpm test"', "pnpm"],
+    ["pwsh -Command Set-Location C:\\work; pnpm test", "pnpm"],
   ])("unwraps Windows shell launchers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -278,6 +280,7 @@ describe("commandProgramName", () => {
     "sudo cd /tmp && npm test",
     "command CI=1 npm test",
     "command false && npm test",
+    "cmd /c false && npm test",
     "cd /tmp <<EOF\nunterminated heredoc",
     "cd /tmp && >/tmp/log",
     "(xcrun simctl io booted recordVideo /tmp/video.mp4 &) ; wait",

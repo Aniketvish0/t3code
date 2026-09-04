@@ -816,8 +816,17 @@ function windowsShellPayloadProgramName(
   tokens: ReadonlyArray<string>,
   start: number,
   depth: number,
+  remainingCommand: string | null,
+  separator: string | null,
   segmentsRemaining: number,
 ): WindowsShellPayload {
+  const parsePayload = (payload: string | undefined): string | null => {
+    if (!payload) return null;
+    const command =
+      remainingCommand && separator ? `${payload} ${separator} ${remainingCommand}` : payload;
+    return commandProgramNameInternal(command, depth + 1, "shell", segmentsRemaining);
+  };
+
   if (shell === "cmd" || shell === "cmd.exe") {
     for (let index = start; index < tokens.length; index += 1) {
       const option = tokens[index]!.toLowerCase();
@@ -825,9 +834,7 @@ function windowsShellPayloadProgramName(
       const payload = tokens[index + 1];
       return {
         matched: true,
-        program: payload
-          ? commandProgramNameInternal(payload, depth + 1, "shell", segmentsRemaining)
-          : null,
+        program: parsePayload(payload),
       };
     }
     return { matched: false, program: null };
@@ -839,9 +846,7 @@ function windowsShellPayloadProgramName(
       const payload = tokens[index + 1];
       return {
         matched: true,
-        program: payload
-          ? commandProgramNameInternal(payload, depth + 1, "shell", segmentsRemaining)
-          : null,
+        program: parsePayload(payload),
       };
     }
     if (option === "-file" || option === "-f") {
@@ -1234,6 +1239,8 @@ function parseCommandProgramName(
         tokens,
         index + 1,
         depth,
+        commandSplit.remainingCommand,
+        commandSplit.separator,
         segmentsRemaining,
       );
       if (payload.matched) return payload.program;
