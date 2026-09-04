@@ -147,6 +147,7 @@ describe("commandProgramName", () => {
 
   it.each([
     ["set -eu; npm test", "npm"],
+    [": && npm test", "npm"],
     ["true && npm test", "npm"],
     ["sudo -n true && npm test", "npm"],
     ["sudo -n true; echo checked", "echo"],
@@ -379,6 +380,12 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBeNull();
   });
 
+  it("does not retain aliases assigned inside control flow", () => {
+    expect(commandProgramName('TOOL=git; if false; then\nTOOL=npm\nfi\n"$TOOL" status')).toBe(
+      "git",
+    );
+  });
+
   it.each([
     ["ROOT=${BASE:-path with spaces}; npm test", "npm"],
     ["ROOT=`printf 'path with spaces'`; pnpm test", "pnpm"],
@@ -422,8 +429,10 @@ describe("commandProgramName", () => {
 
   it.each([
     "if test -f package.json\nthen\n  npm test\nfi",
+    "[[ -d first && -d second ]] && npm test",
     'for file in *\ndo\n  echo "$file"\ndone',
     "while true\ndo\n  sleep 1\ndone",
+    "cd /tmp; build () { npm test; }",
   ])("does not label commands inside multiline shell control flow: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
   });
@@ -443,5 +452,18 @@ describe("commandProgramName", () => {
     ].join("\n");
 
     expect(commandProgramName(command)).toBe("npm");
+  });
+
+  it("bounds the number of top-level setup segments", () => {
+    const command = [
+      ...Array.from({ length: 2_000 }, (_, index) => `export VALUE_${index}=configured`),
+      "npm test",
+    ].join(";");
+
+    expect(commandProgramName(command)).toBeNull();
+  });
+
+  it("bounds nested command wrappers", () => {
+    expect(commandProgramName(`${"command ".repeat(9)}git status`)).toBeNull();
   });
 });

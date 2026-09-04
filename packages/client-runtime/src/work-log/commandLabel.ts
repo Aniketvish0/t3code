@@ -1,6 +1,8 @@
 type CommandWrapper = "env" | "sudo";
 type CommandProgramContext = "exec" | "shell";
 
+const MAX_COMMAND_SEGMENTS = 64;
+
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
 const WINDOWS_SHELL_PROGRAMS = new Set([
   "cmd",
@@ -710,6 +712,7 @@ function powerShellAssignmentProgramName(
   command: string,
   depth: number,
   remainingCommand: string | null,
+  segmentsRemaining: number,
 ): PowerShellAssignment {
   const assignment = command.match(
     /^\s*\$(?:(env|global|local|script):)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*([\s\S]*)$/iu,
@@ -722,7 +725,7 @@ function powerShellAssignmentProgramName(
     return {
       matched: true,
       program: remainingCommand
-        ? commandProgramNameInternal(remainingCommand, depth, "shell")
+        ? commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1)
         : null,
     };
   }
@@ -738,13 +741,15 @@ function powerShellAssignmentProgramName(
 
   const directCommand = value.match(/^(?:@?\(\s*)?([A-Za-z][A-Za-z0-9_.-]*)\b/u)?.[1];
   if (directCommand && !NON_DESCRIPTIVE_SHELL_PROGRAMS.has(directCommand.toLowerCase())) {
-    const parsedCommand = commandProgramNameInternal(value, depth + 1, "shell");
+    const parsedCommand = commandProgramNameInternal(value, depth + 1, "shell", segmentsRemaining);
     return { matched: true, program: parsedCommand ?? directCommand };
   }
 
   return {
     matched: true,
-    program: remainingCommand ? commandProgramNameInternal(remainingCommand, depth, "shell") : null,
+    program: remainingCommand
+      ? commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1)
+      : null,
   };
 }
 
@@ -758,6 +763,7 @@ function windowsShellPayloadProgramName(
   tokens: ReadonlyArray<string>,
   start: number,
   depth: number,
+  segmentsRemaining: number,
 ): WindowsShellPayload {
   if (shell === "cmd" || shell === "cmd.exe") {
     for (let index = start; index < tokens.length; index += 1) {
@@ -766,7 +772,9 @@ function windowsShellPayloadProgramName(
       const payload = tokens[index + 1];
       return {
         matched: true,
-        program: payload ? commandProgramNameInternal(payload, depth + 1, "shell") : null,
+        program: payload
+          ? commandProgramNameInternal(payload, depth + 1, "shell", segmentsRemaining)
+          : null,
       };
     }
     return { matched: false, program: null };
@@ -778,7 +786,9 @@ function windowsShellPayloadProgramName(
       const payload = tokens[index + 1];
       return {
         matched: true,
-        program: payload ? commandProgramNameInternal(payload, depth + 1, "shell") : null,
+        program: payload
+          ? commandProgramNameInternal(payload, depth + 1, "shell", segmentsRemaining)
+          : null,
       };
     }
     if (option === "-file" || option === "-f") {
@@ -848,6 +858,7 @@ function referencedCommandAlias(token: string): string | null {
 function literalCommandAliasProgramName(command: string): string | null {
   const aliases = new Map<string, string>();
   let remainingCommand: string | null = command;
+  let controlFlowDepth = 0;
 
   for (let segmentCount = 0; remainingCommand && segmentCount < 64; segmentCount += 1) {
     const commandWithoutComments = commandWithoutLeadingShellComments(remainingCommand);
@@ -874,13 +885,32 @@ function literalCommandAliasProgramName(command: string): string | null {
     const aliasedProgram = aliasName ? aliases.get(aliasName) : undefined;
     if (aliasedProgram) return aliasedProgram;
 
-    if (tokens[0] === "unset") {
+    const leadingToken = tokens[0];
+    if (leadingToken === "fi" || leadingToken === "done" || leadingToken === "esac") {
+      controlFlowDepth = Math.max(0, controlFlowDepth - 1);
+    }
+    if (
+      leadingToken === "if" ||
+      leadingToken === "for" ||
+      leadingToken === "while" ||
+      leadingToken === "until" ||
+      leadingToken === "select" ||
+      leadingToken === "case"
+    ) {
+      controlFlowDepth += 1;
+    }
+
+    if (controlFlowDepth === 0 && leadingToken === "unset") {
       for (const name of tokens.slice(1)) aliases.delete(name);
     }
 
     const assignmentStart = tokens[0] === "export" ? 1 : 0;
     const assignments = tokens.slice(assignmentStart).map(literalAssignmentProgram);
-    if (assignments.length > 0 && assignments.every((assignment) => assignment !== null)) {
+    if (
+      controlFlowDepth === 0 &&
+      assignments.length > 0 &&
+      assignments.every((assignment) => assignment !== null)
+    ) {
       for (const assignment of assignments) {
         if (assignment.program) aliases.set(assignment.name, assignment.program);
         else aliases.delete(assignment.name);
@@ -899,6 +929,7 @@ function wrappedShellCommandProgramName(
   start: number,
   depth: number,
   remainingCommand: string | null,
+  segmentsRemaining: number,
 ): string | null {
   let index = start;
 
@@ -950,8 +981,9 @@ function wrappedShellCommandProgramName(
 
   const wrappedProgram = commandProgramNameInternal(
     serializeShellTokens(wrappedTokens),
-    depth,
+    depth + 1,
     wrapper === "exec" ? "exec" : "shell",
+    segmentsRemaining,
   );
   if (wrappedProgram !== null) return wrappedProgram;
 
@@ -963,7 +995,7 @@ function wrappedShellCommandProgramName(
     !TERMINAL_SHELL_PROGRAMS.has(target) &&
     remainingCommand
   ) {
-    return commandProgramNameInternal(remainingCommand, depth, "shell");
+    return commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1);
   }
   return null;
 }
@@ -972,8 +1004,9 @@ function parseCommandProgramName(
   command: string,
   depth: number,
   context: CommandProgramContext,
+  segmentsRemaining: number,
 ): string | null {
-  if (depth >= 8) return null;
+  if (depth >= 8 || segmentsRemaining <= 0) return null;
   const commandWithoutComments = commandWithoutLeadingShellComments(command);
   if (commandWithoutComments === null) return null;
   if (
@@ -983,11 +1016,16 @@ function parseCommandProgramName(
   ) {
     return null;
   }
+  if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*\{/u.test(commandWithoutComments)) return null;
+  // `&&` and `||` inside a `[[ ... ]]` expression are not top-level command
+  // separators. Keep the label conservative instead of scanning the test body.
+  if (commandWithoutComments.startsWith("[[")) return null;
   const commandSplit = splitFirstShellCommand(commandWithoutComments);
   const powerShellAssignment = powerShellAssignmentProgramName(
     commandSplit.firstCommand,
     depth,
     commandSplit.remainingCommand,
+    segmentsRemaining,
   );
   if (powerShellAssignment.matched) return powerShellAssignment.program;
   const windowsPath = commandSplit.firstCommand.match(
@@ -1004,7 +1042,12 @@ function parseCommandProgramName(
     !/[\\/]/u.test(tokens[0] ?? "")
   ) {
     return commandSplit.remainingCommand
-      ? commandProgramNameInternal(commandSplit.remainingCommand, depth, context)
+      ? commandProgramNameInternal(
+          commandSplit.remainingCommand,
+          depth,
+          context,
+          segmentsRemaining - 1,
+        )
       : null;
   }
   let index = 0;
@@ -1028,12 +1071,27 @@ function parseCommandProgramName(
       index += 1;
       continue;
     }
+    if (executionContext === "shell" && token === ":") {
+      return commandSplit.remainingCommand
+        ? commandProgramNameInternal(
+            commandSplit.remainingCommand,
+            depth,
+            executionContext,
+            segmentsRemaining - 1,
+          )
+        : null;
+    }
     if (
       NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
       !(token.startsWith("$") && token.includes("/"))
     ) {
       return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
-        ? commandProgramNameInternal(commandSplit.remainingCommand, depth, executionContext)
+        ? commandProgramNameInternal(
+            commandSplit.remainingCommand,
+            depth,
+            executionContext,
+            segmentsRemaining - 1,
+          )
         : null;
     }
     const tokenProgram = token.split(/[\\/]/).at(-1);
@@ -1053,7 +1111,7 @@ function parseCommandProgramName(
       if (wrapper === "env" && (token === "-S" || token === "--split-string")) {
         const splitCommand = tokens[index + 1];
         return splitCommand
-          ? commandProgramNameInternal(splitCommand, depth + 1, executionContext)
+          ? commandProgramNameInternal(splitCommand, depth + 1, executionContext, segmentsRemaining)
           : null;
       }
       if (wrapper === "env" && token.startsWith("--split-string=")) {
@@ -1061,6 +1119,7 @@ function parseCommandProgramName(
           token.slice("--split-string=".length),
           depth + 1,
           executionContext,
+          segmentsRemaining,
         );
       }
       if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
@@ -1100,12 +1159,20 @@ function parseCommandProgramName(
       const scriptIndex = shellCommandArgumentIndex(tokens, index + 1);
       if (scriptIndex !== null) {
         const script = tokens[scriptIndex];
-        return script ? commandProgramNameInternal(script, depth + 1, "shell") : null;
+        return script
+          ? commandProgramNameInternal(script, depth + 1, "shell", segmentsRemaining)
+          : null;
       }
     }
     const lowerTokenProgram = tokenProgram?.toLowerCase();
     if (lowerTokenProgram && WINDOWS_SHELL_PROGRAMS.has(lowerTokenProgram)) {
-      const payload = windowsShellPayloadProgramName(lowerTokenProgram, tokens, index + 1, depth);
+      const payload = windowsShellPayloadProgramName(
+        lowerTokenProgram,
+        tokens,
+        index + 1,
+        depth,
+        segmentsRemaining,
+      );
       if (payload.matched) return payload.program;
     }
     if (lowerTokenProgram === "start-process") {
@@ -1130,6 +1197,7 @@ function parseCommandProgramName(
           serializeShellTokens(tokens.slice(targetIndex)),
           depth + 1,
           "exec",
+          segmentsRemaining,
         );
         if (wrappedProgram !== null) return wrappedProgram;
       }
@@ -1141,6 +1209,7 @@ function parseCommandProgramName(
         index + 1,
         depth,
         commandSplit.remainingCommand,
+        segmentsRemaining,
       );
     }
     if (
@@ -1152,7 +1221,12 @@ function parseCommandProgramName(
       !TERMINAL_SHELL_PROGRAMS.has(tokenProgram) &&
       commandSplit.remainingCommand
     ) {
-      return commandProgramNameInternal(commandSplit.remainingCommand, depth, "shell");
+      return commandProgramNameInternal(
+        commandSplit.remainingCommand,
+        depth,
+        "shell",
+        segmentsRemaining - 1,
+      );
     }
     if (
       executionContext === "shell" &&
@@ -1161,7 +1235,12 @@ function parseCommandProgramName(
       POWERSHELL_SETUP_PROGRAMS.has(lowerTokenProgram) &&
       commandSplit.remainingCommand
     ) {
-      return commandProgramNameInternal(commandSplit.remainingCommand, depth, "shell");
+      return commandProgramNameInternal(
+        commandSplit.remainingCommand,
+        depth,
+        "shell",
+        segmentsRemaining - 1,
+      );
     }
     if (
       !tokenProgram ||
@@ -1177,7 +1256,12 @@ function parseCommandProgramName(
   }
 
   if ((sawAssignment || sawRedirection) && wrapper === null && commandSplit.remainingCommand) {
-    return commandProgramNameInternal(commandSplit.remainingCommand, depth, executionContext);
+    return commandProgramNameInternal(
+      commandSplit.remainingCommand,
+      depth,
+      executionContext,
+      segmentsRemaining - 1,
+    );
   }
   return null;
 }
@@ -1186,15 +1270,17 @@ function commandProgramNameInternal(
   command: string,
   depth: number,
   context: CommandProgramContext,
+  segmentsRemaining = MAX_COMMAND_SEGMENTS,
 ): string | null {
+  if (segmentsRemaining <= 0) return null;
   const calledProgram = powerShellCallOperatorProgramName(command);
   if (calledProgram !== undefined) return calledProgram;
   return (
-    parseCommandProgramName(command, depth, context) ??
+    parseCommandProgramName(command, depth, context, segmentsRemaining) ??
     (context === "shell" ? literalCommandAliasProgramName(command) : null)
   );
 }
 
 export function commandProgramName(command: string, depth = 0): string | null {
-  return commandProgramNameInternal(command, depth, "shell");
+  return commandProgramNameInternal(command, depth, "shell", MAX_COMMAND_SEGMENTS);
 }
